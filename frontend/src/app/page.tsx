@@ -71,17 +71,22 @@ export default function Home() {
   const [studentImages, setStudentImages] = useState<File[]>([]);
 
   useEffect(() => {
-    try {
-      const savedResults = localStorage.getItem("ss_last_results");
-      const savedChat = localStorage.getItem("ss_last_chat");
-      const savedRaw = localStorage.getItem("ss_faculty_raw");
+  try {
+    const savedChat = localStorage.getItem("ss_last_chat");
+    const savedRaw = localStorage.getItem("ss_faculty_raw");
 
-      if (savedResults && savedResults !== "undefined") setResults(JSON.parse(savedResults));
-      if (savedChat && savedChat !== "undefined") setChatHistory(JSON.parse(savedChat));
-      if (savedRaw && savedRaw !== "undefined") setFacultyRaw(JSON.parse(savedRaw));
-    } catch (e) {
-      console.error("LocalStorage Error:", e);
+    if (savedChat && savedChat !== "undefined") {
+      setChatHistory(JSON.parse(savedChat));
     }
+
+    if (savedRaw && savedRaw !== "undefined") {
+      setFacultyRaw(JSON.parse(savedRaw));
+    }
+
+    localStorage.removeItem("ss_last_results");
+  } catch (e) {
+    console.error("LocalStorage Error:", e);
+  }
   }, []);
 
   const handleFacultyFileChange = (e: ChangeEvent<HTMLInputElement>) => {
