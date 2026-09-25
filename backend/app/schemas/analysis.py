@@ -1,200 +1,41 @@
-﻿from typing import List
-
-from fastapi import (
-    APIRouter,
-    UploadFile,
-    File,
-    HTTPException,
-)
-
-from app.services.doc_service import extract_text
-
-from app.services.ai_service import (
-    transcribe_images,
-    extract_faculty_topics,
-    extract_student_topics,
-    perform_gap_analysis,
-    generate_study_notes,
-    chat_with_notes,
-)
-
-from app.schemas.analysis import (
-    NoteGenerationRequest,
-    ChatRequest,
-)
+﻿from pydantic import BaseModel, Field
+from typing import List, Optional
 
 
-router = APIRouter()
+class Topic(BaseModel):
+    topic: str = Field(..., description="The name of the subject or concept")
+    summary: str = Field(..., description="A concise explanation of the gap or content")
+    status: str = Field("missing", description="covered, partially_covered, or missing")
 
 
-# =========================================================
-# ANALYZE
-# =========================================================
-
-@router.post("/analyze")
-async def analyze(
-    faculty_file: UploadFile = File(...),
-    student_images: List[UploadFile] = File(...),
-):
-    try:
-        print(
-            f"ANALYZE START | "
-            f"faculty={faculty_file.filename} | "
-            f"student_images={len(student_images)}"
-        )
-
-        # -------------------------------------------------
-        # STEP 1: FACULTY DOCUMENT
-        # -------------------------------------------------
-
-        faculty_text = await extract_text(
-            faculty_file
-        )
-
-        print(
-            "FACULTY TEXT EXTRACTED | "
-            f"characters={len(faculty_text)}"
-        )
-
-        # -------------------------------------------------
-        # STEP 2: STUDENT HANDWRITTEN NOTES
-        # -------------------------------------------------
-
-        student_text = await transcribe_images(
-            student_images
-        )
-
-        print(
-            "STUDENT NOTES TRANSCRIBED | "
-            f"characters={len(student_text)}"
-        )
-
-        # -------------------------------------------------
-        # STEP 3: FACULTY TOPICS
-        # -------------------------------------------------
-
-        faculty_topics = await extract_faculty_topics(
-            faculty_text
-        )
-
-        print(
-            "FACULTY TOPICS EXTRACTED | "
-            f"count={len(faculty_topics)}"
-        )
-
-        # -------------------------------------------------
-        # STEP 4: STUDENT TOPICS
-        # -------------------------------------------------
-
-        student_topics = await extract_student_topics(
-            student_text
-        )
-
-        print(
-            "STUDENT TOPICS EXTRACTED | "
-            f"count={len(student_topics)}"
-        )
-
-        # -------------------------------------------------
-        # STEP 5: GAP ANALYSIS
-        # -------------------------------------------------
-
-        result = await perform_gap_analysis(
-            faculty_topics,
-            student_topics,
-        )
-
-        print(
-            "GAP ANALYSIS COMPLETE"
-        )
-
-        return result
-
-    except Exception as e:
-        print(
-            f"ANALYSIS ERROR | "
-            f"type={type(e).__name__} | "
-            f"error={repr(e)}"
-        )
-
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Analysis pipeline failed: "
-                f"{str(e)}"
-            ),
-        )
+class FacultyTopic(BaseModel):
+    topic: str = Field(..., description="The core concept or learning objective")
+    description: str = Field(..., description="Detailed explanation of what is expected to be known")
+    importance: str = Field(..., description="High/Medium/Low importance to the course")
+    page_reference: Optional[str] = Field(None, description="The page or slide number where this is discussed")
 
 
-# =========================================================
-# GENERATE STUDY NOTES
-# =========================================================
-
-@router.post("/generate-notes")
-async def generate_notes(
-    request: NoteGenerationRequest,
-):
-    try:
-        result = await generate_study_notes(
-            topic=request.topic,
-            status=request.status,
-            why_needed=request.why_needed,
-            student_knowledge=request.student_knowledge,
-            missing_information=request.missing_information,
-            faculty_context=getattr(
-                request,
-                "faculty_context",
-                "",
-            ),
-        )
-
-        return result
-
-    except Exception as e:
-        print(
-            f"NOTE GENERATION ERROR | "
-            f"type={type(e).__name__} | "
-            f"error={repr(e)}"
-        )
-
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Study note generation failed: "
-                f"{str(e)}"
-            ),
-        )
+class StudentTopic(BaseModel):
+    topic: str = Field(..., description="The concept identified in student notes")
+    evidence: str = Field(..., description="Quote or summary from the notes proving this was covered")
+    completeness: str = Field(..., description="Complete or Incomplete based on the evidence")
 
 
-# =========================================================
-# CHAT
-# =========================================================
+class NoteGenerationRequest(BaseModel):
+    topic: str = Field(..., description="The topic for which study notes should be generated")
+    status: str = Field(..., description="The current coverage status of the topic")
+    why_needed: str = Field("", description="Explanation of why this topic needs to be studied")
+    student_knowledge: str = Field("", description="What the student already knows about this topic")
+    missing_information: List[str] = Field(
+        default_factory=list,
+        description="Specific information that is missing from the student's notes"
+    )
+    faculty_context: str = Field(
+        "",
+        description="Relevant context extracted from the faculty learning material"
+    )
 
-@router.post("/chat")
-async def chat(
-    request: ChatRequest,
-):
-    try:
-        answer = await chat_with_notes(
-            notes=request.notes,
-            question=request.question,
-        )
 
-        return {
-            "answer": answer
-        }
-
-    except Exception as e:
-        print(
-            f"CHAT ERROR | "
-            f"type={type(e).__name__} | "
-            f"error={repr(e)}"
-        )
-
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Chat failed: "
-                f"{str(e)}"
-            ),
-        )
+class ChatRequest(BaseModel):
+    notes: str = Field(..., description="The study notes that the assistant should use")
+    question: str = Field(..., description="The student's question")
