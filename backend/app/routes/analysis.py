@@ -1,16 +1,26 @@
 ﻿import asyncio
-from typing import List
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Body
+from fastapi import (
+    APIRouter,
+    UploadFile,
+    File,
+    HTTPException,
+    Body,
+)
+
+from app.schemas.analysis import (
+    AnalysisResponse,
+    ChatRequest,
+)
 
 from app.services.doc_service import extract_text
 
 from app.services.ai_service import (
     transcribe_images,
-    extract_faculty_topics,
     perform_gap_analysis,
-    generate_topic_notes,
     get_chat_response,
+    extract_faculty_topics,
+    generate_topic_notes,
 )
 
 router = APIRouter()
@@ -19,7 +29,7 @@ router = APIRouter()
 @router.post("/analyze")
 async def analyze_notes(
     faculty_file: UploadFile = File(...),
-    student_images: List[UploadFile] = File(...),
+    student_images: list[UploadFile] = File(...),
 ):
     try:
         print(
@@ -28,7 +38,9 @@ async def analyze_notes(
             f"student_images={len(student_images)}"
         )
 
-        faculty_data = await extract_text(faculty_file)
+        faculty_data = await extract_text(
+            faculty_file
+        )
 
         print(
             f"FACULTY EXTRACTION COMPLETE | "
@@ -38,7 +50,7 @@ async def analyze_notes(
         if not faculty_data:
             raise HTTPException(
                 status_code=400,
-                detail="No readable content found in faculty material."
+                detail="No readable content found in faculty materials."
             )
 
         transcribed_notes = await transcribe_images(
@@ -51,18 +63,18 @@ async def analyze_notes(
         )
 
         try:
-            faculty_map = await extract_faculty_topics(
+            knowledge_map = await extract_faculty_topics(
                 faculty_data
             )
 
             print(
                 f"FACULTY KNOWLEDGE MAP | "
-                f"topics={len(faculty_map)}"
+                f"topics={len(knowledge_map)}"
             )
 
         except Exception as e:
             print(
-                f"FACULTY KNOWLEDGE MAP ERROR | "
+                f"KNOWLEDGE MAP ERROR | "
                 f"type={type(e).__name__} | "
                 f"error={repr(e)}"
             )
@@ -70,12 +82,12 @@ async def analyze_notes(
             raise HTTPException(
                 status_code=500,
                 detail=(
-                    "Failed to extract the faculty knowledge map: "
+                    "Failed to extract faculty knowledge map: "
                     f"{str(e)}"
-                )
+                ),
             )
 
-        if not faculty_map:
+        if not knowledge_map:
             raise HTTPException(
                 status_code=500,
                 detail="Faculty knowledge map is empty."
@@ -84,7 +96,7 @@ async def analyze_notes(
         result = await perform_gap_analysis(
             faculty_data,
             transcribed_notes,
-            faculty_map,
+            knowledge_map,
         )
 
         response_dict = result.dict()
@@ -93,22 +105,22 @@ async def analyze_notes(
 
         response_dict.setdefault(
             "faculty_knowledge_map",
-            faculty_map
+            knowledge_map,
         )
 
         response_dict.setdefault(
             "missing_topics",
-            []
+            [],
         )
 
         response_dict.setdefault(
             "partially_covered_topics",
-            []
+            [],
         )
 
         response_dict.setdefault(
             "covered_topics",
-            []
+            [],
         )
 
         print(
@@ -124,9 +136,20 @@ async def analyze_notes(
     except HTTPException:
         raise
 
+    except ValueError as e:
+        print(
+            f"ANALYSIS VALUE ERROR | "
+            f"error={repr(e)}"
+        )
+
+        raise HTTPException(
+            status_code=400,
+            detail=str(e),
+        )
+
     except Exception as e:
         print(
-            f"ANALYSIS PIPELINE ERROR | "
+            f"CRITICAL PIPELINE ERROR | "
             f"type={type(e).__name__} | "
             f"error={repr(e)}"
         )
@@ -136,13 +159,13 @@ async def analyze_notes(
             detail=(
                 "Analysis pipeline failed: "
                 f"{str(e)}"
-            )
+            ),
         )
 
 
 @router.post("/generate-notes")
 async def generate_notes(
-    payload: dict = Body(...)
+    payload: dict = Body(...),
 ):
     try:
         faculty_data = payload.get(
@@ -170,9 +193,11 @@ async def generate_notes(
             )
 
         if topic == "all":
+
             all_notes = []
 
             for gap in all_gaps:
+
                 try:
                     await asyncio.sleep(0.5)
 
@@ -183,12 +208,12 @@ async def generate_notes(
                             "topic": getattr(
                                 gap,
                                 "topic",
-                                "Unknown"
+                                "Unknown",
                             ),
                             "summary": getattr(
                                 gap,
                                 "summary",
-                                ""
+                                "",
                             ),
                         }
                     )
@@ -198,7 +223,7 @@ async def generate_notes(
                         faculty_data,
                         gap_info.get(
                             "summary",
-                            ""
+                            "",
                         ),
                     )
 
@@ -207,8 +232,9 @@ async def generate_notes(
                     )
 
                 except Exception as e:
+
                     print(
-                        f"NOTE ERROR | "
+                        f"NOTE GENERATION ERROR | "
                         f"topic={gap_info.get('topic')} | "
                         f"error={repr(e)}"
                     )
@@ -217,7 +243,7 @@ async def generate_notes(
                         {
                             "topic": gap_info.get(
                                 "topic",
-                                "Unknown"
+                                "Unknown",
                             ),
                             "status": "error",
                             "sections": [
@@ -225,7 +251,8 @@ async def generate_notes(
                                     "heading": "Error",
                                     "content": (
                                         "Failed to generate notes "
-                                        "for this topic."
+                                        "for this topic. Please try "
+                                        "generating it individually."
                                     ),
                                 }
                             ],
@@ -240,18 +267,21 @@ async def generate_notes(
                 detail="Topic data is required for note generation."
             )
 
-        return await generate_topic_notes(
+        note = await generate_topic_notes(
             topic,
             faculty_data,
             student_evidence,
         )
 
+        return note
+
     except HTTPException:
         raise
 
     except Exception as e:
+
         print(
-            f"NOTE GENERATION ERROR | "
+            f"NOTES GENERATION ERROR | "
             f"type={type(e).__name__} | "
             f"error={repr(e)}"
         )
@@ -261,38 +291,28 @@ async def generate_notes(
             detail=(
                 "Failed to generate study notes: "
                 f"{str(e)}"
-            )
+            ),
         )
 
 
 @router.post("/chat")
 async def chat(
-    payload: dict = Body(...)
+    request: ChatRequest,
 ):
     try:
-        notes = payload.get(
-            "notes",
-            ""
-        )
-
-        question = payload.get(
-            "question",
-            ""
-        )
 
         answer = await get_chat_response(
-            message=question,
-            context={
-                "notes": notes
-            },
-            history=[],
+            message=request.message,
+            context=request.context,
+            history=request.history,
         )
 
         return {
-            "answer": answer
+            "response": answer
         }
 
     except Exception as e:
+
         print(
             f"CHAT ERROR | "
             f"type={type(e).__name__} | "
@@ -304,5 +324,5 @@ async def chat(
             detail=(
                 "Chat failed: "
                 f"{str(e)}"
-            )
+            ),
         )
