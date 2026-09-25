@@ -1,7 +1,8 @@
 fastapi
-uvicorn
-pypdf
-python-pptx
-groq
+uvicorn[standard]
 python-multipart
 python-dotenv
+groq
+pypdf
+python-pptx
+Pillow
