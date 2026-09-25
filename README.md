@@ -1531,7 +1531,7 @@ Future versions could generate:
 - Formula sheets
 - Quick revision summaries
 - Practice sets
-- Topic-specific quizzes
+- Topic specific quizzes
 - Exam preparation material
 
 ---
