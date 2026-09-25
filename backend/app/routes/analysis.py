@@ -33,13 +33,9 @@ router = APIRouter()
 
 @router.post("/analyze")
 async def analyze(
-
     faculty_file: UploadFile = File(...),
-
     student_images: List[UploadFile] = File(...),
-
 ):
-
     try:
 
         print(
@@ -52,7 +48,7 @@ async def analyze(
         # STEP 1: FACULTY DOCUMENT
         # -------------------------------------------------
 
-        faculty_text = extract_text(
+        faculty_text = await extract_text(
             faculty_file
         )
 
@@ -140,21 +136,14 @@ async def analyze(
 async def generate_notes(
     request: NoteGenerationRequest,
 ):
-
     try:
 
         result = await generate_study_notes(
-
             topic=request.topic,
-
             status=request.status,
-
             why_needed=request.why_needed,
-
             student_knowledge=request.student_knowledge,
-
             missing_information=request.missing_information,
-
             faculty_context=getattr(
                 request,
                 "faculty_context",
@@ -189,13 +178,10 @@ async def generate_notes(
 async def chat(
     request: ChatRequest,
 ):
-
     try:
 
         answer = await chat_with_notes(
-
             notes=request.notes,
-
             question=request.question,
         )
 
