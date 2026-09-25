@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+:root {
+  --background: #000000;
+  --foreground: #ffffff;
+  --accent: #3b82f6;
+  --card-bg: rgba(255, 255, 255, 0.03);
+  --card-border: rgba(255, 255, 255, 0.1);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  overflow-x: hidden;
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-white/[0.03] backdrop-blur-xl border border-white/[0.1] rounded-2xl transition-all duration-500;
+  }
+  .glass-card:hover {
+    @apply bg-white/[0.06] border-white/[0.2] shadow-[0_0_30px_rgba(255,255,255,0.05)];
+  }
+}
