@@ -1,260 +1,624 @@
-﻿import json
-import base64
-from app.core.config import client, GROQ_TEXT_MODEL, GROQ_VISION_MODEL
-from app.schemas.analysis import AnalysisResponse, Topic, FacultyTopic, StudentTopic
+﻿import base64
+import json
+from typing import List, Dict, Any
 
-def encode_image(file_bytes):
-    return base64.b64encode(file_bytes).decode('utf-8')
+from fastapi import UploadFile
+from groq import Groq
 
-async def transcribe_images(student_images):
-    if not client:
-        raise Exception("GROQ_API_KEY is missing or invalid. Configure the backend environment before running analysis.")
+from app.core.config import (
+    GROQ_API_KEY,
+    GROQ_VISION_MODEL,
+    GROQ_TEXT_MODEL,
+)
 
-    transcribed_notes = ""
-    for i, img_file in enumerate(student_images):
-        img_bytes = await img_file.read()
-        base64_image = encode_image(img_bytes)
+
+# ---------------------------------------------------------
+# GROQ CLIENT
+# ---------------------------------------------------------
+
+client = Groq(api_key=GROQ_API_KEY)
+
+
+# ---------------------------------------------------------
+# HELPER: CLEAN JSON RESPONSE
+# ---------------------------------------------------------
+
+def clean_json_response(text: str) -> str:
+    """
+    Removes markdown code fences if the model returns JSON
+    inside ```json ... ```.
+    """
+    text = text.strip()
+
+    if text.startswith("```json"):
+        text = text[7:]
+
+    elif text.startswith("```"):
+        text = text[3:]
+
+    if text.endswith("```"):
+        text = text[:-3]
+
+    return text.strip()
+
+
+# ---------------------------------------------------------
+# TRANSCRIBE STUDENT HANDWRITTEN IMAGES
+# ---------------------------------------------------------
+
+async def transcribe_images(
+    image_files: List[UploadFile],
+) -> str:
+
+    all_transcriptions = []
+
+    for i, img_file in enumerate(image_files):
+
         try:
+            # Read image
+            image_bytes = await img_file.read()
+
+            if not image_bytes:
+                raise ValueError(
+                    f"Image file is empty: {img_file.filename}"
+                )
+
+            # Convert to base64
+            base64_image = base64.b64encode(
+                image_bytes
+            ).decode("utf-8")
+
+            # Determine MIME type
+            content_type = img_file.content_type or "image/jpeg"
+
+            print(
+                f"VISION REQUEST | "
+                f"file={img_file.filename} | "
+                f"type={content_type} | "
+                f"size={len(image_bytes)} bytes | "
+                f"model={GROQ_VISION_MODEL}"
+            )
+
+            # -------------------------------------------------
+            # GROQ VISION REQUEST
+            # -------------------------------------------------
+
             vision_response = client.chat.completions.create(
+
+                model=GROQ_VISION_MODEL,
+
                 messages=[
                     {
                         "role": "user",
+
                         "content": [
-                            {"type": "text", "text": f"You are an expert handwriting transcriber. Please transcribe the following image (Note {i+1}) into clear, structured text. Maintain the original meaning and structure. If the text is illegible, mark it as [illegible]. Return only the transcription."},
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+
+                            {
+                                "type": "text",
+
+                                "text": (
+                                    "You are an expert handwriting "
+                                    "transcriber.\n\n"
+
+                                    f"Transcribe Note {i + 1} "
+                                    "into clear, structured text.\n\n"
+
+                                    "Requirements:\n"
+                                    "- Preserve the original meaning.\n"
+                                    "- Preserve headings when visible.\n"
+                                    "- Preserve bullet points.\n"
+                                    "- Preserve mathematical equations "
+                                    "as accurately as possible.\n"
+                                    "- Preserve formulas.\n"
+                                    "- Preserve variable names.\n"
+                                    "- Preserve examples.\n"
+                                    "- Do not add information that is "
+                                    "not present in the image.\n"
+                                    "- If something cannot be read, write "
+                                    "[illegible].\n\n"
+
+                                    "Return only the transcription."
+                                ),
+                            },
+
+                            {
+                                "type": "image_url",
+
+                                "image_url": {
+                                    "url": (
+                                        f"data:{content_type};"
+                                        f"base64,{base64_image}"
+                                    )
+                                },
+                            },
                         ],
                     }
                 ],
-                model=GROQ_VISION_MODEL,
+
+                # Keep the response bounded
+                max_completion_tokens=1024,
+
+                temperature=0.2,
+
+                # qwen3.8 supports this
+                reasoning_effort="none",
+
+                # Explicitly disable streaming
+                stream=False,
             )
-            transcribed_notes += f"--- Note {i+1} ---\n{vision_response.choices[0].message.content}\n\n"
+
+            # -------------------------------------------------
+            # EXTRACT RESPONSE
+            # -------------------------------------------------
+
+            transcription = (
+                vision_response
+                .choices[0]
+                .message
+                .content
+            )
+
+            if not transcription:
+                raise ValueError(
+                    f"Groq returned an empty transcription "
+                    f"for {img_file.filename}"
+                )
+
+            print(
+                f"VISION SUCCESS | "
+                f"file={img_file.filename}"
+            )
+
+            all_transcriptions.append(
+                f"--- Note {i + 1}: {img_file.filename} ---\n"
+                f"{transcription}\n"
+            )
+
         except Exception as e:
-            print(f"Error transcribing image {img_file.filename}: {e}")
-            raise e
-    
-    return transcribed_notes if transcribed_notes else "No transcription available."
 
-async def extract_faculty_topics(faculty_data):
-    if not client:
-        raise Exception("GROQ_API_KEY is missing or invalid. Configure the backend environment before running analysis.")
+            # IMPORTANT:
+            # This gives us the exact error in Render logs.
+            print(
+                f"VISION ERROR | "
+                f"file={img_file.filename} | "
+                f"type={type(e).__name__} | "
+                f"error={repr(e)}"
+            )
 
-    faculty_context = ""
-    for entry in faculty_data:
-        faculty_context += f"[Page/Slide {entry['page']}]: {entry['content']}\n\n"
+            raise
 
-    topic_prompt = f"""
-    You are an expert curriculum designer. Analyze the following faculty materials and extract a structured knowledge map.
-    
-    FACULTY MATERIALS:
-    {faculty_context[:6000]}
-    
-    TASK:
-    Identify the core concepts, key formulas, and critical learning objectives. 
-    For each topic, determine its importance (High/Medium/Low) and note the page/slide number.
-    
-    FORMAT:
-    Return a JSON object strictly following this schema:
-    {{ 
-      "faculty_knowledge_map": [
-        {{ 
-          "topic": "Concept Name", 
-          "description": "What the student needs to understand", 
-          "importance": "High", 
-          "page_reference": "Page 2" 
-        }}
-      ] 
-    }}
-    """
-    
+    return "\n".join(all_transcriptions)
+
+
+# ---------------------------------------------------------
+# EXTRACT FACULTY TOPICS
+# ---------------------------------------------------------
+
+async def extract_faculty_topics(
+    faculty_text: str,
+) -> List[Dict[str, Any]]:
+
+    prompt = f"""
+You are analyzing faculty learning material.
+
+The faculty material is the PRIMARY reference.
+
+Extract the important academic topics from the material.
+
+For each topic return:
+
+- topic
+- description
+- important_concepts
+- formulas
+- exam_relevance
+
+Do NOT invent information.
+
+Only use information explicitly supported by the faculty material.
+
+Return valid JSON.
+
+Faculty material:
+
+{faculty_text}
+"""
+
     response = client.chat.completions.create(
-        messages=[{"role": "user", "content": topic_prompt}],
+
         model=GROQ_TEXT_MODEL,
-        response_format={"type": "json_object"}
+
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You extract structured academic topics "
+                    "from faculty material."
+                ),
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+
+        temperature=0.1,
+
+        max_completion_tokens=8192,
+
+        stream=False,
     )
-    
-    data = json.loads(response.choices[0].message.content)
-    return data.get("faculty_knowledge_map", [])
 
-async def extract_student_topics(transcribed_notes):
-    if not client:
-        raise Exception("GROQ_API_KEY is missing or invalid. Configure the backend environment before running analysis.")
+    content = response.choices[0].message.content
 
-    student_prompt = f"""
-    You are an expert academic analyst. Analyze the following student's handwritten notes.
-    
-    STUDENT NOTES:
-    {transcribed_notes}
-    
-    TASK:
-    Identify the core concepts, formulas, and topics the student has actually written down.
-    For each topic, provide a brief piece of evidence (quote or summary) from their notes and an assessment of whether the coverage seems complete or just a mention.
-    
-    FORMAT:
-    Return a JSON object strictly following this schema:
-    {{ 
-      "student_knowledge_map": [
-        {{ 
-          "topic": "Concept Name", 
-          "evidence": "Quote from notes", 
-          "completeness": "Complete/Incomplete" 
-        }}
-      ] 
-    }}
-    """
-    
+    content = clean_json_response(content)
+
+    try:
+        return json.loads(content)
+
+    except json.JSONDecodeError:
+
+        print(
+            "FACULTY TOPIC JSON ERROR:",
+            repr(content)
+        )
+
+        raise ValueError(
+            "Failed to parse faculty topics as JSON."
+        )
+
+
+# ---------------------------------------------------------
+# EXTRACT STUDENT TOPICS
+# ---------------------------------------------------------
+
+async def extract_student_topics(
+    student_text: str,
+) -> List[Dict[str, Any]]:
+
+    prompt = f"""
+You are analyzing student notes.
+
+Extract the topics and concepts that the student has
+actually demonstrated knowledge of.
+
+Do not assume knowledge merely because a topic name
+appears.
+
+For each topic return:
+
+- topic
+- covered_concepts
+- formulas
+- examples
+- confidence
+
+Use only the student's notes.
+
+Return valid JSON.
+
+Student notes:
+
+{student_text}
+"""
+
     response = client.chat.completions.create(
-        messages=[{"role": "user", "content": student_prompt}],
+
         model=GROQ_TEXT_MODEL,
-        response_format={"type": "json_object"}
+
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You analyze student notes and identify "
+                    "demonstrated knowledge."
+                ),
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+
+        temperature=0.1,
+
+        max_completion_tokens=8192,
+
+        stream=False,
     )
-    
-    data = json.loads(response.choices[0].message.content)
-    return data.get("student_knowledge_map", [])
 
-async def perform_gap_analysis(faculty_data, transcribed_notes, faculty_map):
-    if not client:
-        raise Exception("GROQ_API_KEY is missing or invalid. Configure the backend environment before running analysis.")
+    content = response.choices[0].message.content
 
-    student_map = await extract_student_topics(transcribed_notes)
+    content = clean_json_response(content)
 
-    faculty_context = ""
-    for entry in faculty_data:
-        faculty_context += f"[Page/Slide {entry['page']}]: {entry['content']}\n\n"
+    try:
+        return json.loads(content)
 
-    analysis_prompt = f"""
-    You are a world-class study assistant.
-    
-    EXPECTED KNOWLEDGE MAP (The curriculum):
-    {json.dumps(faculty_map, indent=2)}
-    
-    STUDENT KNOWLEDGE MAP (What was FOUND in notes):
-    {json.dumps(student_map, indent=2)}
-    
-    RAW FACULTY TEXT (For detail):
-    {faculty_context[:5000]}
-    
-    TASK:
-    Compare the Student Map against the Faculty Map.
-    1. COVERED: Topic is in both maps and student evidence is "Complete".
-    2. PARTIALLY COVERED: Topic is in both maps but student evidence is "Incomplete" or missing key details.
-    3. MISSING: Topic is in Faculty Map but entirely absent from Student Map.
-    
-    FORMAT:
-    Return a JSON object strictly following this schema:
-    {{ 
-      "missing_topics": [{{ "topic": "Name", "summary": "Detailed gap + Page ref", "status": "missing" }}], 
-      "partially_covered_topics": [{{ "topic": "Name", "summary": "What is missing from the mention", "status": "partially_covered" }}], 
-      "covered_topics": ["Topic A", "Topic B"] 
-    }}
-    """
-    
-    analysis_response = client.chat.completions.create(
-        messages=[{"role": "user", "content": analysis_prompt}],
+    except json.JSONDecodeError:
+
+        print(
+            "STUDENT TOPIC JSON ERROR:",
+            repr(content)
+        )
+
+        raise ValueError(
+            "Failed to parse student topics as JSON."
+        )
+
+
+# ---------------------------------------------------------
+# GAP ANALYSIS
+# ---------------------------------------------------------
+
+async def perform_gap_analysis(
+    faculty_topics: List[Dict[str, Any]],
+    student_topics: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+
+    prompt = f"""
+You are performing an academic knowledge-gap analysis.
+
+The FACULTY MATERIAL is the primary reference.
+
+Compare the faculty topics against the student's
+demonstrated knowledge.
+
+Classify each faculty topic as exactly one of:
+
+MISSING
+PARTIAL
+MASTERED
+
+Definitions:
+
+MISSING:
+The student has not demonstrated knowledge of the topic.
+
+PARTIAL:
+The student has demonstrated some knowledge, but important
+faculty material is missing.
+
+MASTERED:
+The student has demonstrated sufficient coverage of the
+faculty material.
+
+Do not assume knowledge.
+
+For every topic provide:
+
+- topic
+- status
+- why_needed
+- student_knowledge
+- missing_information
+
+Return valid JSON.
+
+FACULTY TOPICS:
+
+{json.dumps(faculty_topics, indent=2)}
+
+STUDENT TOPICS:
+
+{json.dumps(student_topics, indent=2)}
+"""
+
+    response = client.chat.completions.create(
+
         model=GROQ_TEXT_MODEL,
-        response_format={"type": "json_object"}
+
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are an academic knowledge-gap "
+                    "analysis system."
+                ),
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+
+        temperature=0.1,
+
+        max_completion_tokens=8192,
+
+        stream=False,
     )
-    
-    result_data = json.loads(analysis_response.choices[0].message.content)
-    
-    return AnalysisResponse(
-        missing_topics=[Topic(**t) for t in result_data.get("missing_topics", [])],
-        partially_covered_topics=[Topic(**t) for t in result_data.get("partially_covered_topics", [])],
-        covered_topics=result_data.get("covered_topics", []),
-        faculty_knowledge_map=faculty_map,
-        student_knowledge_map=student_map
-    )
 
-async def generate_topic_notes(topic_data, faculty_data, student_evidence):
-    if not client:
-        raise Exception("GROQ_API_KEY is missing or invalid.")
+    content = response.choices[0].message.content
 
-    faculty_context = ""
-    for entry in faculty_data:
-        faculty_context += f"[Page {entry['page']}]: {entry['content']}\n\n"
+    content = clean_json_response(content)
 
-    status = topic_data.get("status", "missing")
-    topic_name = topic_data.get("topic", "Unknown Topic")
-    gap_summary = topic_data.get("summary", "No specific gap identified.")
+    try:
+        result = json.loads(content)
 
-    notes_prompt = f"""
-    You are a world-class academic tutor creating structured exam-preparation notes.
-    
-    TOPIC: {topic_name}
-    STATUS: {status}
-    IDENTIFIED GAP: {gap_summary}
-    STUDENT EVIDENCE: {student_evidence}
-    
-    FACULTY MATERIAL (Authoritative Source):
-    {faculty_context[:6000]}
-    
-    TASK:
-    {'Generate a complete but concise set of study notes for this missing topic.' if status == 'missing' else 'Generate targeted notes ONLY for the missing portions of this partially covered topic. Avoid repeating material the student already knows.'}
-    
-    GUIDELINES:
-    - PRIMARY SOURCE: Use ONLY the provided faculty material. Do not invent definitions or equations.
-    - STYLE: Structured, clear, concise, and exam-focused. No conversational filler.
-    - MATH: Use LaTeX for equations (e.g., $$E=mc^2$$). Explain variables immediately below.
-    - STRUCTURE: Use headings, subheadings, numbered steps, and bullet points.
-    
-    EXPECTED SECTIONS (Include only if applicable):
-    - Definition / Meaning
-    - Core Concept
-    - Components
-    - Formula / Mathematical Representation
-    - Working / Steps
-    - Example
-    - Important/Exam Points
-    
-    FORMAT:
-    Return a JSON object strictly following this schema:
-    {{
-      "topic": "{topic_name}",
-      "status": "{status}",
-      "why_needed": "Short explanation of why this is critical",
-      "missing_information": ["point 1", "point 2"],
-      "sections": [
+    except json.JSONDecodeError:
+
+        print(
+            "GAP ANALYSIS JSON ERROR:",
+            repr(content)
+        )
+
+        raise ValueError(
+            "Failed to parse gap analysis as JSON."
+        )
+
+    return result
+
+
+# ---------------------------------------------------------
+# GENERATE STUDY NOTES
+# ---------------------------------------------------------
+
+async def generate_study_notes(
+    topic: str,
+    status: str,
+    why_needed: str,
+    student_knowledge: str,
+    missing_information: List[str],
+    faculty_context: str = "",
+) -> Dict[str, Any]:
+
+    prompt = f"""
+Create targeted study notes for the following topic.
+
+Topic:
+{topic}
+
+Status:
+{status}
+
+Why this topic is needed:
+{why_needed}
+
+What the student already knows:
+{student_knowledge}
+
+Missing information:
+{json.dumps(missing_information, indent=2)}
+
+Faculty material context:
+{faculty_context}
+
+IMPORTANT RULES:
+
+1. The faculty material is the primary reference.
+2. Do not invent faculty-specific information.
+3. Do not invent slide numbers or page numbers.
+4. Do not claim a formula came from the faculty material
+   unless it is actually present there.
+5. If the topic is PARTIAL, focus mainly on the missing
+   information.
+6. Avoid unnecessarily repeating information the student
+   already knows.
+7. Explain concepts clearly for exam preparation.
+8. Include equations when appropriate.
+9. Define every variable used in an equation.
+10. Include step-by-step procedures when appropriate.
+11. Include a small example when the source material supports it.
+12. Clearly separate source-supported content from general
+    explanation if necessary.
+
+Return JSON in exactly this structure:
+
+{{
+    "topic": "...",
+    "status": "...",
+    "why_needed": "...",
+    "student_knowledge": "...",
+    "missing_information": [],
+    "sections": [
         {{
-          "heading": "Section Title",
-          "content": "Detailed but concise explanation",
-          "equations": ["LaTeX equation 1", "LaTeX equation 2"]
+            "heading": "...",
+            "content": "...",
+            "equations": []
         }}
-      ],
-      "exam_points": ["Key point 1", "Key point 2"],
-      "sources": ["Page X", "Slide Y"]
-    }}
-    """
-    
+    ],
+    "exam_points": [],
+    "sources": []
+}}
+"""
+
     response = client.chat.completions.create(
-        messages=[{"role": "user", "content": notes_prompt}],
+
         model=GROQ_TEXT_MODEL,
-        response_format={"type": "json_object"}
+
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You generate structured, source-grounded "
+                    "academic study notes."
+                ),
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+
+        temperature=0.2,
+
+        max_completion_tokens=8192,
+
+        stream=False,
     )
-    
-    return json.loads(response.choices[0].message.content)
 
-async def get_chat_response(message, context, history):
-    if not client:
-        raise Exception("GROQ_API_KEY is missing or invalid. Configure the backend environment before running analysis.")
+    content = response.choices[0].message.content
 
-    system_prompt = f"""
-    You are a specialized study assistant. You are helping a student bridge the gap between their notes and faculty materials.
-    
-    Current Analysis Context:
-    - Missing Topics: {json.dumps(context.get('missing_topics', []))}
-    - Covered Topics: {json.dumps(context.get('covered_topics', []))}
-    
-    Your goal is to provide specific, actionable study advice based on the missing topics. Be encouraging and academic.
-    """
+    content = clean_json_response(content)
 
-    messages = [{"role": "system", "content": system_prompt}]
-    for msg in history:
-        messages.append({"role": msg["role"], "content": msg["content"]})
-    
-    messages.append({"role": "user", "content": message})
+    try:
+        return json.loads(content)
+
+    except json.JSONDecodeError:
+
+        print(
+            "STUDY NOTES JSON ERROR:",
+            repr(content)
+        )
+
+        raise ValueError(
+            "Failed to parse generated study notes as JSON."
+        )
+
+
+# ---------------------------------------------------------
+# CHAT WITH GENERATED NOTES
+# ---------------------------------------------------------
+
+async def chat_with_notes(
+    notes: str,
+    question: str,
+) -> str:
+
+    prompt = f"""
+You are a study assistant.
+
+Answer the student's question using the provided study notes.
+
+Study notes:
+
+{notes}
+
+Student question:
+
+{question}
+
+Rules:
+
+- Stay grounded in the supplied notes.
+- Explain clearly.
+- If the answer is not present in the notes, say so.
+- Do not invent faculty-specific information.
+- Use equations when useful.
+"""
 
     response = client.chat.completions.create(
-        messages=messages,
+
         model=GROQ_TEXT_MODEL,
+
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a helpful academic study assistant."
+                ),
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+
+        temperature=0.2,
+
+        max_completion_tokens=4096,
+
+        stream=False,
     )
 
     return response.choices[0].message.content
