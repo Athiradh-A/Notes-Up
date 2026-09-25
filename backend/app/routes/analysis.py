@@ -1,88 +1,220 @@
-﻿import asyncio
-from fastapi import APIRouter, UploadFile, File, HTTPException, Body
-from app.schemas.analysis import AnalysisResponse, ChatRequest
+﻿from typing import List
+
+from fastapi import (
+    APIRouter,
+    UploadFile,
+    File,
+    HTTPException,
+)
+
 from app.services.doc_service import extract_text
-from app.services.ai_service import transcribe_images, perform_gap_analysis, get_chat_response, extract_faculty_topics, generate_topic_notes
+
+from app.services.ai_service import (
+    transcribe_images,
+    extract_faculty_topics,
+    extract_student_topics,
+    perform_gap_analysis,
+    generate_study_notes,
+    chat_with_notes,
+)
+
+from app.schemas.analysis import (
+    NoteGenerationRequest,
+    ChatRequest,
+)
+
 
 router = APIRouter()
 
+
+# =========================================================
+# ANALYZE
+# =========================================================
+
 @router.post("/analyze")
-async def analyze_notes(faculty_file: UploadFile = File(...), student_images: list[UploadFile] = File(...)):
+async def analyze(
+
+    faculty_file: UploadFile = File(...),
+
+    student_images: List[UploadFile] = File(...),
+
+):
+
     try:
-        # 1. Extract raw text with page mapping
-        faculty_data = await extract_text(faculty_file)
-        if not faculty_data:
-            raise HTTPException(status_code=400, detail="No readable content found in faculty materials.")
-        
-        # 2. Transcribe student notes
-        transcribed_notes = await transcribe_images(student_images)
-        
-        # 3. Extract structured Knowledge Map from faculty materials
-        try:
-            knowledge_map = await extract_faculty_topics(faculty_data)
-        except Exception as e:
-            print(f"Knowledge Map Error: {e}")
-            knowledge_map = []
-        
-        # 4. Perform Gap Analysis
-        result = await perform_gap_analysis(faculty_data, transcribed_notes, knowledge_map)
-        
-        # Attach raw faculty data to the response as a hidden field 
-        # so the frontend can send it back for note generation.
-        response_dict = result.dict()
-        response_dict["_faculty_raw"] = faculty_data
-        
-        return response_dict
-        
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
+
+        print(
+            f"ANALYZE START | "
+            f"faculty={faculty_file.filename} | "
+            f"student_images={len(student_images)}"
+        )
+
+        # -------------------------------------------------
+        # STEP 1: FACULTY DOCUMENT
+        # -------------------------------------------------
+
+        faculty_text = extract_text(
+            faculty_file
+        )
+
+        print(
+            "FACULTY TEXT EXTRACTED | "
+            f"characters={len(faculty_text)}"
+        )
+
+        # -------------------------------------------------
+        # STEP 2: STUDENT HANDWRITTEN NOTES
+        # -------------------------------------------------
+
+        student_text = await transcribe_images(
+            student_images
+        )
+
+        print(
+            "STUDENT NOTES TRANSCRIBED | "
+            f"characters={len(student_text)}"
+        )
+
+        # -------------------------------------------------
+        # STEP 3: FACULTY TOPICS
+        # -------------------------------------------------
+
+        faculty_topics = await extract_faculty_topics(
+            faculty_text
+        )
+
+        print(
+            "FACULTY TOPICS EXTRACTED | "
+            f"count={len(faculty_topics)}"
+        )
+
+        # -------------------------------------------------
+        # STEP 4: STUDENT TOPICS
+        # -------------------------------------------------
+
+        student_topics = await extract_student_topics(
+            student_text
+        )
+
+        print(
+            "STUDENT TOPICS EXTRACTED | "
+            f"count={len(student_topics)}"
+        )
+
+        # -------------------------------------------------
+        # STEP 5: GAP ANALYSIS
+        # -------------------------------------------------
+
+        result = await perform_gap_analysis(
+            faculty_topics,
+            student_topics,
+        )
+
+        print(
+            "GAP ANALYSIS COMPLETE"
+        )
+
+        return result
+
     except Exception as e:
-        print(f"Critical Pipeline Error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Analysis pipeline failed: {str(e)}")
+
+        print(
+            f"ANALYSIS ERROR | "
+            f"type={type(e).__name__} | "
+            f"error={repr(e)}"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Analysis pipeline failed: "
+                f"{str(e)}"
+            ),
+        )
+
+
+# =========================================================
+# GENERATE STUDY NOTES
+# =========================================================
 
 @router.post("/generate-notes")
-async def generate_notes(payload: dict = Body(...)):
+async def generate_notes(
+    request: NoteGenerationRequest,
+):
+
     try:
-        faculty_data = payload.get("faculty_data")
-        topic = payload.get("topic")
-        student_evidence = payload.get("student_evidence", "")
-        all_gaps = payload.get("all_gaps", [])
 
-        if not faculty_data:
-            raise HTTPException(status_code=400, detail="Faculty data is required for note generation.")
+        result = await generate_study_notes(
 
-        if topic == "all":
-            all_notes = []
-            for gap in all_gaps:
-                try:
-                    await asyncio.sleep(0.5)
-                    # Use the gap object directly, ensuring it has a summary
-                    gap_info = gap if isinstance(gap, dict) else {"topic": getattr(gap, 'topic', 'Unknown'), "summary": getattr(gap, 'summary', '')}
-                    note = await generate_topic_notes(gap_info, faculty_data, gap_info.get("summary", ""))
-                    all_notes.append(note)
-                except Exception as e:
-                    print(f"Error generating note for {gap_info.get('topic')}: {e}")
-                    all_notes.append({
-                        "topic": gap_info.get("topic", "Unknown"),
-                        "status": "error",
-                        "sections": [{"heading": "Error", "content": "Failed to generate notes for this topic. Please try generating it individually."}]
-                    })
-            return all_notes
-        
-        if not topic:
-            raise HTTPException(status_code=400, detail="Topic data is required for note generation.")
-            
-        note = await generate_topic_notes(topic, faculty_data, student_evidence)
-        return note
-        
+            topic=request.topic,
+
+            status=request.status,
+
+            why_needed=request.why_needed,
+
+            student_knowledge=request.student_knowledge,
+
+            missing_information=request.missing_information,
+
+            faculty_context=getattr(
+                request,
+                "faculty_context",
+                "",
+            ),
+        )
+
+        return result
+
     except Exception as e:
-        print(f"Notes Generation Error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to generate study notes: {str(e)}")
+
+        print(
+            f"NOTE GENERATION ERROR | "
+            f"type={type(e).__name__} | "
+            f"error={repr(e)}"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Study note generation failed: "
+                f"{str(e)}"
+            ),
+        )
+
+
+# =========================================================
+# CHAT
+# =========================================================
 
 @router.post("/chat")
-async def chat_with_analysis(request: ChatRequest):
+async def chat(
+    request: ChatRequest,
+):
+
     try:
-        response = await get_chat_response(request.message, request.context, request.history)
-        return {"response": response}
+
+        answer = await chat_with_notes(
+
+            notes=request.notes,
+
+            question=request.question,
+        )
+
+        return {
+            "answer": answer
+        }
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+        print(
+            f"CHAT ERROR | "
+            f"type={type(e).__name__} | "
+            f"error={repr(e)}"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Chat failed: "
+                f"{str(e)}"
+            ),
+        )

@@ -2,22 +2,56 @@
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes import analysis
 
-app = FastAPI(title="Study Sanctuary API")
+# =========================================================
+# FASTAPI APPLICATION
+# =========================================================
+
+app = FastAPI(
+    title="Study Sanctuary API",
+    version="1.0.0",
+)
+
+
+# =========================================================
+# CORS
+# =========================================================
 
 app.add_middleware(
+
     CORSMiddleware,
-    allow_origins=["*"],
+
+    allow_origins=[
+        "http://localhost:3000",
+
+        # Vercel domain will be added here later.
+        # Example:
+        # "https://notes-up.vercel.app",
+    ],
+
+    allow_credentials=True,
+
     allow_methods=["*"],
+
     allow_headers=["*"],
 )
 
-# Include Routes
-app.include_router(analysis.router)
+
+# =========================================================
+# ROUTES
+# =========================================================
+
+app.include_router(
+    analysis.router
+)
+
+
+# =========================================================
+# ROOT
+# =========================================================
 
 @app.get("/")
-async def root():
-    return {"message": "Study Sanctuary API is running"}
+def root():
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    return {
+        "message": "Study Sanctuary API is running"
+    }
