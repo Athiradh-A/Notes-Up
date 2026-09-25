@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import KnowledgeOrb from "@/components/KnowledgeOrb";
 import { Upload, Sparkles, Image as ImageIcon, FileText, ArrowLeft, CheckCircle2, AlertCircle, HelpCircle, Send, Loader2, BookOpen, X } from "lucide-react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = "https://notes-up.onrender.com";
 
 interface Topic {
   topic: string;
