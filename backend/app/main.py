@@ -1,57 +1,26 @@
 ﻿from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import analysis
 
-# =========================================================
-# FASTAPI APPLICATION
-# =========================================================
+from app.routes.analysis import router as analysis_router
 
-app = FastAPI(
-    title="Study Sanctuary API",
-    version="1.0.0",
-)
-
-
-# =========================================================
-# CORS
-# =========================================================
+app = FastAPI()
 
 app.add_middleware(
-
     CORSMiddleware,
-
     allow_origins=[
-        "http://localhost:3000",
-
-        # Vercel domain will be added here later.
-        # Example:
-        # "https://notes-up.vercel.app",
+        "https://notes-up-ten.vercel.app/",
     ],
-
     allow_credentials=True,
-
     allow_methods=["*"],
-
     allow_headers=["*"],
 )
 
-
-# =========================================================
-# ROUTES
-# =========================================================
-
 app.include_router(
-    analysis.router
+    analysis_router
 )
 
-
-# =========================================================
-# ROOT
-# =========================================================
-
 @app.get("/")
-def root():
-
+async def root():
     return {
         "message": "Study Sanctuary API is running"
     }
