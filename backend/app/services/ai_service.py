@@ -136,7 +136,7 @@ async def transcribe_images(
                 ],
 
                 # Keep the response bounded
-                max_completion_tokens=1024,
+                max_completion_tokens=800,
 
                 temperature=0.2,
 
