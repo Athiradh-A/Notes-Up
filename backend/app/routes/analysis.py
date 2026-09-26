@@ -405,6 +405,57 @@ async def generate_notes(payload: dict = Body(...)):
 
 
 # =========================================================
+# GENERATE PDF
+# =========================================================
+
+@router.post("/generate-pdf")
+async def generate_pdf(payload: dict = Body(...)):
+    try:
+        notes = payload.get("notes")
+        title = str(payload.get("title") or "AI Study Guide")
+
+        if not notes:
+            raise HTTPException(
+                status_code=400,
+                detail="Study notes are required for PDF generation."
+            )
+
+        if isinstance(notes, str):
+            try:
+                notes = json.loads(notes)
+            except json.JSONDecodeError as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid notes JSON: {e}"
+                )
+
+        if not isinstance(notes, (dict, list)):
+            raise HTTPException(
+                status_code=400,
+                detail="Study notes must be an object or list of objects."
+            )
+
+        pdf_bytes = compile_study_guide_pdf(notes, title)
+
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": 'attachment; filename="notes-up-study-guide.pdf"'
+            },
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"PDF Generation Error: {type(e).__name__}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate PDF: {str(e)}"
+        )
+
+
+# =========================================================
 # CHAT
 # =========================================================
 
