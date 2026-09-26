@@ -626,12 +626,16 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-black text-white font-sans selection:bg-blue-500/30">
-      <nav className="fixed top-0 w-full z-50 px-6 py-4 flex justify-between items-center backdrop-blur-sm bg-black/20">
-        <div className="flex items-center gap-2 font-medium tracking-tighter text-lg">
+      <nav className="fixed top-0 w-full z-50 px-6 py-4 flex items-center backdrop-blur-sm bg-black/20">
+        <a
+          href="/"
+          onClick={() => resetAnalysis()}
+          className="flex items-center gap-2 font-medium tracking-tighter text-lg hover:opacity-80 transition-opacity"
+          aria-label="Go to Note&apos;sUp home page"
+        >
           <span className="text-blue-500">✦</span>
           <span>Note&apos;sUp</span>
-        </div>
-        <div className="text-xs uppercase tracking-widest text-gray-500 font-medium">AI Gap Analyzer v1.0</div>
+        </a>
       </nav>
 
       <div className="max-w-4xl mx-auto px-6 pt-32 pb-24">
@@ -719,9 +723,6 @@ export default function Home() {
                   <ArrowLeft size={20} className="text-gray-500 group-hover:text-white" />
                 </button>
                 <h2 className="text-3xl font-bold tracking-tight">Analysis Results</h2>
-              </div>
-              <div className="px-4 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-medium">
-                AI-Generated Report
               </div>
             </div>
 
