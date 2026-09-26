@@ -88,8 +88,14 @@ def equation_to_typst(value: Any) -> str:
     equation = replace_braced_command(equation, "\\frac", "frac")
     equation = replace_braced_command(equation, "\\sqrt", "sqrt")
 
-    equation = equation.replace("\\mathbf", "").replace("\\mathrm", "")
-    equation = equation.replace("\\textbf", "").replace("\\text", "")
+    # LaTeX text commands contain ordinary words. In Typst math mode,
+    # multi-letter words are interpreted as variable/function names, so
+    # "\\text{variables}" would otherwise become an undefined variable.
+    # Convert text commands to quoted math text instead.
+    equation = replace_braced_command(equation, "\\textbf", '"')
+    equation = replace_braced_command(equation, "\\text", '"')
+    equation = replace_braced_command(equation, "\\mathrm", '"')
+    equation = equation.replace("\\mathbf", "")
 
     return equation.strip()
 
