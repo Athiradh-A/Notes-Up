@@ -399,9 +399,12 @@ For every topic provide:
 
 - topic
 - status
+- summary: a short faculty-grounded definition or description of the topic, plus the key gap identified
 - why_needed
 - student_knowledge
 - missing_information
+
+The summary must be based on the faculty topic information. Do not invent a definition that is not supported by the faculty material.
 
 Return valid JSON.
 
