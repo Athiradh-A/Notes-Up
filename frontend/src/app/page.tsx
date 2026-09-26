@@ -439,8 +439,16 @@ export default function Home() {
                         {item.importance} Priority
                       </span>
                     </div>
-                    <p className="text-gray-400 text-xs leading-relaxed mb-2">{item.description}</p>
-                    <div className="text-[10px] text-gray-600 font-mono">{item.page_reference || ""}</div>
+                    <p className="text-gray-400 text-xs leading-relaxed mb-2">
+                      {typeof item.description === "string"
+                        ? item.description
+                        : item.description && typeof item.description === "object"
+                        ? String((item.description as { description?: string; text?: string }).description || (item.description as { text?: string }).text || "")
+                        : ""}
+                    </p>
+                    <div className="text-[10px] text-gray-600 font-mono">
+                      {typeof item.page_reference === "string" ? item.page_reference : ""}
+                    </div>
                   </div>
                 ))}
               </div>
