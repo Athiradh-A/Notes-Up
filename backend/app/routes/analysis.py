@@ -1,11 +1,11 @@
 ﻿import asyncio
 import json
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Body
+from fastapi import APIRouter, UploadFile, File, HTTPException, Body, Response
 
 from app.services.doc_service import extract_text
 
-from app.services.ai_service import (
+from app.services.typst_service import compile_study_guide_pdf\n\nfrom app.services.ai_service import (
     transcribe_images,
     extract_faculty_topics,
     extract_student_topics,
