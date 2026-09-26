@@ -345,7 +345,9 @@ Student notes:
 
         temperature=0.1,
 
-        max_completion_tokens=8192,
+        max_completion_tokens=4096,
+
+        response_format={"type": "json_object"},
 
         stream=False,
     )
@@ -558,6 +560,115 @@ Return JSON in exactly this structure:
     if not isinstance(result, dict):
         raise ValueError("Generated study notes returned an invalid JSON structure.")
     return result
+
+
+# ---------------------------------------------------------
+# GENERATE BULK STUDY NOTES
+# ---------------------------------------------------------
+
+async def generate_bulk_study_notes(
+    gaps: List[Dict[str, Any]],
+    faculty_context: str = "",
+) -> List[Dict[str, Any]]:
+
+    prompt = f"""
+Create targeted study notes for ALL of the academic gaps below.
+
+The faculty material is the PRIMARY reference.
+
+Faculty material context:
+{faculty_context}
+
+Gaps:
+{json.dumps(gaps, indent=2)}
+
+For every gap, create one study-note object.
+
+IMPORTANT RULES:
+
+1. Use the faculty material as the primary reference.
+2. Do not invent faculty-specific information.
+3. Do not invent slide numbers or page numbers.
+4. If a topic is PARTIAL, focus mainly on the missing information.
+5. Avoid unnecessarily repeating information the student already knows.
+6. Explain concepts clearly for exam preparation.
+7. Include equations when appropriate.
+8. Define every variable used in an equation.
+9. Include step-by-step procedures when appropriate.
+10. Include a small example when the source material supports it.
+
+Return ONLY valid JSON in exactly this structure:
+
+{{
+    "notes": [
+        {{
+            "topic": "...",
+            "status": "...",
+            "why_needed": "...",
+            "student_knowledge": "...",
+            "missing_information": [],
+            "sections": [
+                {{
+                    "heading": "...",
+                    "content": "...",
+                    "equations": []
+                }}
+            ],
+            "exam_points": [],
+            "sources": []
+        }}
+    ]
+}}
+"""
+
+    response = client.chat.completions.create(
+
+        model=GROQ_TEXT_MODEL,
+
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You generate structured, source-grounded "
+                    "academic study notes for multiple topics."
+                ),
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+
+        temperature=0.2,
+
+        max_completion_tokens=8192,
+
+        response_format={"type": "json_object"},
+
+        stream=False,
+    )
+
+    content = response.choices[0].message.content
+
+    result = parse_json_response(content, "BULK STUDY NOTES")
+
+    if isinstance(result, dict):
+        notes = result.get("notes", [])
+        if isinstance(notes, list):
+            return [
+                note for note in notes
+                if isinstance(note, dict)
+            ]
+
+    if isinstance(result, list):
+        return [
+            note for note in result
+            if isinstance(note, dict)
+        ]
+
+    raise ValueError(
+        "Bulk study notes returned an invalid JSON structure."
+    )
 
 
 # ---------------------------------------------------------
