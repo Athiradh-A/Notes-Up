@@ -1,5 +1,4 @@
-import html
-import json
+import re
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -14,18 +13,31 @@ TEMPLATE_PATH = (
 def clean_text(value: Any) -> str:
     if value is None:
         return ""
-    return str(value).replace("\\(", "").replace("\\)", "").replace("\\[", "").replace("\\]", "").strip()
+    return (
+        str(value)
+        .replace("\\(", "")
+        .replace("\\)", "")
+        .replace("\\[", "")
+        .replace("\\]", "")
+        .strip()
+    )
 
 
 def escape_typst_text(value: Any) -> str:
     text = clean_text(value)
-    text = text.replace("\\", "\\")
-    text = text.replace("[", "\\[").replace("]", "\\]")
+    text = text.replace("\\", "\\\\")
+    for character in ("#", "$", "*", "_", "[", "]"):
+        text = text.replace(character, "\\" + character)
     return text
 
 
 def escape_typst_title(value: Any) -> str:
-    return escape_typst_text(value).replace("#", "\\#")
+    return escape_typst_text(value)
+
+
+def replace_braced_command(equation: str, command: str, function: str) -> str:
+    pattern = rf"{re.escape(command)}\{{([^{{}}]+)\}}"
+    return re.sub(pattern, rf"{function}(\1)", equation)
 
 
 def equation_to_typst(value: Any) -> str:
@@ -33,39 +45,51 @@ def equation_to_typst(value: Any) -> str:
     if not equation:
         return ""
 
-    equation = equation.replace("\\[", "").replace("\\]", "")
-    equation = equation.replace("\\(", "").replace("\\)", "")
     equation = equation.strip("$ ")
+    equation = equation.replace("\\left", "").replace("\\right", "")
+    equation = equation.replace("\\cdot", " dot ")
+    equation = equation.replace("\\times", " times ")
+    equation = equation.replace("\\pm", " plus.minus ")
+    equation = equation.replace("\\leq", " <= ")
+    equation = equation.replace("\\le", " <= ")
+    equation = equation.replace("\\geq", " >= ")
+    equation = equation.replace("\\ge", " >= ")
+    equation = equation.replace("\\neq", " != ")
+    equation = equation.replace("\\infty", " infinity ")
+    equation = equation.replace("\\rightarrow", " arrow ")
+    equation = equation.replace("\\to", " arrow ")
+    equation = equation.replace("\\,", " ")
+    equation = equation.replace("\\quad", " ")
+    equation = equation.replace("\\qquad", " ")
 
-    replacements = {
-        "\\cdot": " dot ",
-        "\\times": " times ",
-        "\\pm": " plus.minus ",
-        "\\leq": " <= ",
-        "\\le": " <= ",
-        "\\geq": " >= ",
-        "\\ge": " >= ",
-        "\\neq": " != ",
-        "\\infty": " infinity ",
-        "\\rightarrow": " arrow ",
-        "\\to": " arrow ",
-        "\\left": "",
-        "\\right": "",
-        "\\,": " ",
-        "\\ ": " ",
-        "\\quad": " ",
-        "\\qquad": " ",
-        "\\textbf": "",
-        "\\mathbf": "",
-        "\\mathrm": "",
-        "\\text": "",
-    }
+    for latex, typst_name in {
+        "\\alpha": "alpha",
+        "\\beta": "beta",
+        "\\gamma": "gamma",
+        "\\delta": "delta",
+        "\\epsilon": "epsilon",
+        "\\theta": "theta",
+        "\\lambda": "lambda",
+        "\\mu": "mu",
+        "\\pi": "pi",
+        "\\rho": "rho",
+        "\\sigma": "sigma",
+        "\\tau": "tau",
+        "\\phi": "phi",
+        "\\omega": "omega",
+        "\\Delta": "Delta",
+        "\\Lambda": "Lambda",
+        "\\Sigma": "Sigma",
+        "\\Phi": "Phi",
+        "\\Omega": "Omega",
+    }.items():
+        equation = equation.replace(latex, typst_name)
 
-    for source, target in replacements.items():
-        equation = equation.replace(source, target)
+    equation = replace_braced_command(equation, "\\frac", "frac")
+    equation = replace_braced_command(equation, "\\sqrt", "sqrt")
 
-    equation = equation.replace("\\frac{", "frac{")
-    equation = equation.replace("\\sqrt{", "sqrt{")
+    equation = equation.replace("\\mathbf", "").replace("\\mathrm", "")
+    equation = equation.replace("\\textbf", "").replace("\\text", "")
 
     return equation.strip()
 
@@ -89,11 +113,15 @@ def add_bullets(lines: List[str], items: Any) -> None:
         text = clean_text(item)
         if text:
             lines.append(f"- {escape_typst_text(text)}")
+
     if items:
         lines.append("")
 
 
-def build_study_guide_typst(notes: Dict[str, Any] | List[Dict[str, Any]], title: str) -> str:
+def build_study_guide_typst(
+    notes: Dict[str, Any] | List[Dict[str, Any]],
+    title: str,
+) -> str:
     note_list = notes if isinstance(notes, list) else [notes]
     lines: List[str] = []
 
@@ -115,17 +143,15 @@ def build_study_guide_typst(notes: Dict[str, Any] | List[Dict[str, Any]], title:
             lines.append(f"*Status:* {escape_typst_text(status)}")
             lines.append("")
 
-        why_needed = note.get("why_needed")
-        if why_needed:
+        if note.get("why_needed"):
             lines.append("== Why this is needed")
             lines.append("")
-            add_text_paragraphs(lines, why_needed)
+            add_text_paragraphs(lines, note.get("why_needed"))
 
-        student_knowledge = note.get("student_knowledge")
-        if student_knowledge:
+        if note.get("student_knowledge"):
             lines.append("== What you already know")
             lines.append("")
-            add_text_paragraphs(lines, student_knowledge)
+            add_text_paragraphs(lines, note.get("student_knowledge"))
 
         missing_information = note.get("missing_information")
         if isinstance(missing_information, list) and missing_information:
@@ -140,13 +166,11 @@ def build_study_guide_typst(notes: Dict[str, Any] | List[Dict[str, Any]], title:
                     continue
 
                 heading = clean_text(section.get("heading"))
-                content = section.get("content")
-
                 if heading:
                     lines.append(f"== {escape_typst_title(heading)}")
                     lines.append("")
 
-                add_text_paragraphs(lines, content)
+                add_text_paragraphs(lines, section.get("content"))
 
                 equations = section.get("equations")
                 if isinstance(equations, list):
@@ -164,9 +188,15 @@ def build_study_guide_typst(notes: Dict[str, Any] | List[Dict[str, Any]], title:
 
         sources = note.get("sources")
         if isinstance(sources, list) and sources:
-            source_text = " • ".join(clean_text(source) for source in sources if clean_text(source))
+            source_text = " • ".join(
+                clean_text(source)
+                for source in sources
+                if clean_text(source)
+            )
             if source_text:
-                lines.append(f"*Sources:* {escape_typst_text(source_text)}")
+                lines.append(
+                    f"*Sources:* {escape_typst_text(source_text)}"
+                )
                 lines.append("")
 
         if index < len(note_list):
@@ -184,13 +214,18 @@ def compile_study_guide_pdf(
     source = build_study_guide_typst(notes, title)
 
     try:
-        pdf_bytes = typst.compile(source.encode("utf-8"), format="pdf")
+        pdf_bytes = typst.compile(
+            source.encode("utf-8"),
+            format="pdf",
+        )
     except Exception as error:
         print(
             f"TYPST PDF ERROR | type={type(error).__name__} | "
             f"error={repr(error)}"
         )
-        raise RuntimeError(f"Typst PDF generation failed: {error}") from error
+        raise RuntimeError(
+            f"Typst PDF generation failed: {error}"
+        ) from error
 
     if not pdf_bytes:
         raise RuntimeError("Typst returned an empty PDF.")
