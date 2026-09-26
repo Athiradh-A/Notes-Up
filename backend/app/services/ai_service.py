@@ -1,5 +1,6 @@
 import base64
 import json
+import time
 from typing import List, Dict, Any
 
 from fastapi import UploadFile
@@ -151,27 +152,55 @@ def generate_with_fallback(
     max_output_tokens: int = 8192,
     temperature: float = 0.2,
 ) -> str:
-    try:
-        return generate_gemini(
-            prompt=prompt,
-            system_instruction=system_instruction,
-            json_mode=json_mode,
-            max_output_tokens=max_output_tokens,
-            temperature=temperature,
-        )
-    except Exception as gemini_error:
-        print(
-            f"GEMINI ERROR | type={type(gemini_error).__name__} | "
-            f"error={repr(gemini_error)}"
-        )
-        print("FALLBACK | provider=Groq")
-        return generate_groq(
-            prompt=prompt,
-            system_instruction=system_instruction,
-            json_mode=json_mode,
-            max_completion_tokens=max_output_tokens,
-            temperature=temperature,
-        )
+    """
+    Gemini is always the primary provider.
+
+    Groq is used only after Gemini has actually failed. We retry Gemini
+    once before falling back so transient API/network errors do not
+    immediately send requests to Groq.
+    """
+    gemini_errors = []
+
+    for attempt in range(1, 3):
+        try:
+            print(
+                f"PRIMARY ATTEMPT | provider=Gemini | "
+                f"attempt={attempt}/2 | model={GEMINI_MODEL}"
+            )
+
+            return generate_gemini(
+                prompt=prompt,
+                system_instruction=system_instruction,
+                json_mode=json_mode,
+                max_output_tokens=max_output_tokens,
+                temperature=temperature,
+            )
+
+        except Exception as gemini_error:
+            gemini_errors.append(gemini_error)
+
+            print(
+                f"GEMINI ERROR | attempt={attempt}/2 | "
+                f"type={type(gemini_error).__name__} | "
+                f"error={repr(gemini_error)}"
+            )
+
+            if attempt < 2:
+                print("GEMINI RETRY | waiting=1s")
+                time.sleep(1)
+
+    print(
+        "FALLBACK | provider=Groq | "
+        "reason=Gemini failed after 2 attempts"
+    )
+
+    return generate_groq(
+        prompt=prompt,
+        system_instruction=system_instruction,
+        json_mode=json_mode,
+        max_completion_tokens=max_output_tokens,
+        temperature=temperature,
+    )
 
 
 async def transcribe_images(image_files: List[UploadFile]) -> str:
