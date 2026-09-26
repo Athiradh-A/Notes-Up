@@ -169,8 +169,6 @@ export default function Home() {
     const id = isAll ? "all" : topic?.topic || "";
     if (!isAll && !topic) return;
 
-    setGeneratingId(id);
-
     try {
       let currentFacultyData = facultyRaw;
 
@@ -179,9 +177,21 @@ export default function Home() {
         if (savedRaw && savedRaw !== "undefined") currentFacultyData = JSON.parse(savedRaw);
       }
 
-      const missingTopics = results?.missing_topics || [];
-      const partialTopics = results?.partially_covered_topics || [];
+      const missingTopics = Array.isArray(results?.missing_topics)
+        ? results.missing_topics.filter((item) => item && typeof item === "object")
+        : [];
+
+      const partialTopics = Array.isArray(results?.partially_covered_topics)
+        ? results.partially_covered_topics.filter((item) => item && typeof item === "object")
+        : [];
+
       const allTopics = [...missingTopics, ...partialTopics];
+
+      if (isAll && allTopics.length === 0) {
+        throw new Error("No missing or partially covered topics were found.");
+      }
+
+      setGeneratingId(id);
 
       let body;
 
@@ -205,6 +215,13 @@ export default function Home() {
           faculty_context: JSON.stringify(results?.faculty_knowledge_map || currentFacultyData || ""),
         };
       }
+
+      console.log("GENERATE NOTES REQUEST", {
+        isAll,
+        topic: isAll ? "ALL" : topic?.topic,
+        gapCount: allTopics.length,
+        apiUrl: API_URL,
+      });
 
       const response = await fetch(`${API_URL}/generate-notes`, {
         method: "POST",
@@ -451,7 +468,8 @@ export default function Home() {
                         </div>
 
                         <button
-                          onClick={() => generateNotes(item)}
+                          type="button"
+                          onClick={() => void generateNotes(item)}
                           disabled={generatingId === item.topic}
                           className="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-bold text-blue-400 transition-all flex items-center gap-2 whitespace-nowrap disabled:opacity-50"
                         >
