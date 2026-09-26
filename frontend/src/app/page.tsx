@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, FormEvent, ChangeEvent } from "react";
+import { useState, useEffect, useRef, FormEvent, ChangeEvent } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import KnowledgeOrb from "@/components/KnowledgeOrb";
 import { Upload, Sparkles, Image as ImageIcon, FileText, ArrowLeft, CheckCircle2, AlertCircle, HelpCircle, Send, Loader2, BookOpen, X, Download } from "lucide-react";
@@ -82,15 +82,112 @@ function renderNoteText(value: unknown) {
   ));
 }
 
-function renderEquation(value: unknown) {
+declare global {
+  interface Window {
+    katex?: {
+      render: (
+        expression: string,
+        element: HTMLElement,
+        options?: {
+          displayMode?: boolean;
+          throwOnError?: boolean;
+          strict?: "ignore" | "warn" | "error";
+        }
+      ) => void;
+    };
+  }
+}
+
+let katexLoader: Promise<void> | null = null;
+
+function loadKatex() {
+  if (typeof window === "undefined") return Promise.resolve();
+
+  if (window.katex) return Promise.resolve();
+
+  if (katexLoader) return katexLoader;
+
+  katexLoader = new Promise<void>((resolve, reject) => {
+    const existingScript = document.querySelector<HTMLScriptElement>(
+      'script[data-katex="true"]'
+    );
+
+    if (existingScript) {
+      existingScript.addEventListener("load", () => resolve(), { once: true });
+      existingScript.addEventListener("error", () => reject(new Error("KaTeX failed to load")), { once: true });
+      return;
+    }
+
+    if (!document.querySelector('link[data-katex="true"]')) {
+      const stylesheet = document.createElement("link");
+      stylesheet.rel = "stylesheet";
+      stylesheet.href = "https://cdn.jsdelivr.net/npm/katex@0.18.9/dist/katex.min.css";
+      stylesheet.dataset.katex = "true";
+      document.head.appendChild(stylesheet);
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/katex@0.18.9/dist/katex.min.js";
+    script.async = true;
+    script.dataset.katex = "true";
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("KaTeX failed to load"));
+    document.head.appendChild(script);
+  });
+
+  return katexLoader;
+}
+
+function KatexEquation({ value }: { value: unknown }) {
   const equation = cleanGeneratedText(value);
+  const equationRef = useRef<HTMLDivElement>(null);
+  const [katexError, setKatexError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!equation || !equationRef.current) return;
+
+    setKatexError(false);
+
+    loadKatex()
+      .then(() => {
+        if (cancelled || !equationRef.current || !window.katex) return;
+
+        try {
+          window.katex.render(equation, equationRef.current, {
+            displayMode: true,
+            throwOnError: false,
+            strict: "ignore",
+          });
+        } catch (error) {
+          console.error("KaTeX rendering error:", error);
+          if (!cancelled) setKatexError(true);
+        }
+      })
+      .catch((error) => {
+        console.error("KaTeX loading error:", error);
+        if (!cancelled) setKatexError(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [equation]);
+
   if (!equation) return null;
 
   return (
     <div className="my-4 rounded-2xl border border-blue-500/20 bg-blue-500/[0.04] px-6 py-5 text-center">
-      <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.25em] text-blue-400">Equation</div>
-      <div className="overflow-x-auto font-mono text-base md:text-lg text-blue-200 whitespace-pre-wrap leading-relaxed">
-        {equation}
+      <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.25em] text-blue-400">Equation</div>
+      <div
+        ref={equationRef}
+        className="overflow-x-auto text-base md:text-lg text-blue-100 leading-relaxed min-h-8"
+        aria-label={`Mathematical equation: ${equation}`}
+      >
+        {katexError ? (
+          <code className="font-mono text-blue-200 whitespace-pre-wrap">{equation}</code>
+        ) : null}
       </div>
     </div>
   );
@@ -755,7 +852,7 @@ export default function Home() {
                                 {renderNoteText(s.content)}
 
                                 {s.equations?.map((eq, eqidx) => (
-                                  <div key={eqidx}>{renderEquation(eq)}</div>
+                                  <div key={eqidx}>{<KatexEquation value={eq} />}</div>
                                 ))}
                               </div>
                             ))}
@@ -801,7 +898,7 @@ export default function Home() {
                             {renderNoteText(s.content)}
 
                             {s.equations?.map((eq, eqidx) => (
-                              <div key={eqidx}>{renderEquation(eq)}</div>
+                              <div key={eqidx}>{<KatexEquation value={eq} />}</div>
                             ))}
                           </div>
                         ))}
