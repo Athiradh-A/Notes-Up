@@ -7,7 +7,7 @@
   ],
   footer: [
     #set text(size: 8pt, fill: luma(120))
-    #align(center)[#counter(page).display()]
+    #align(center)[#context counter(page).display()]
   ],
 )
 
