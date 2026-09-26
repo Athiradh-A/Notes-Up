@@ -63,6 +63,22 @@ def parse_json_response(content: str, label: str) -> Any:
     raise ValueError(f"Failed to parse {label.lower()} as JSON.")
 
 
+def coerce_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ("description", "text", "content", "value"):
+            nested = value.get(key)
+            if isinstance(nested, str) and nested.strip():
+                return nested
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, list):
+        return "; ".join(coerce_text(item) for item in value)
+    return str(value)
+
+
 def normalize_topic_list(data: Any) -> List[Dict[str, Any]]:
     if isinstance(data, list):
         items = data
@@ -72,7 +88,17 @@ def normalize_topic_list(data: Any) -> List[Dict[str, Any]]:
             items = data.get("faculty_topics", data.get("student_topics", []))
     else:
         items = []
-    return [item for item in items if isinstance(item, dict)]
+
+    normalized = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        cleaned = dict(item)
+        for key in ("topic", "description", "summary", "why_needed", "student_knowledge", "evidence", "confidence", "importance", "page_reference"):
+            if key in cleaned:
+                cleaned[key] = coerce_text(cleaned[key])
+        normalized.append(cleaned)
+    return normalized
 
 
 # ---------------------------------------------------------
