@@ -66,6 +66,7 @@ function cleanGeneratedText(value: unknown): string {
     .replace(/\\\)/g, "")
     .replace(/\\\[/g, "")
     .replace(/\\\]/g, "")
+    .replace(/\\(?=\s|$)/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
