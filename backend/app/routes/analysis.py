@@ -11,6 +11,7 @@ from app.services.ai_service import (
     extract_student_topics,
     perform_gap_analysis,
     generate_study_notes,
+    generate_bulk_study_notes,
     chat_with_notes,
 )
 
@@ -353,18 +354,34 @@ async def generate_notes(payload: dict = Body(...)):
                     if isinstance(line, str) and line.strip()
                 ]
 
-            notes = []
+            normalized_gaps = []
+
             for gap in all_gaps:
-                gap = gap if isinstance(gap, dict) else {"topic": str(gap)}
-                notes.append(await generate_study_notes(
-                    gap.get("topic", "Unknown"),
-                    gap.get("status", "missing"),
-                    gap.get("why_needed", ""),
-                    gap.get("student_knowledge", ""),
-                    gap.get("missing_information", []) if isinstance(gap.get("missing_information", []), list) else [],
-                    faculty_context,
-                ))
-            return notes
+                gap = (
+                    gap
+                    if isinstance(gap, dict)
+                    else {"topic": str(gap)}
+                )
+
+                normalized_gaps.append({
+                    "topic": gap.get("topic", "Unknown"),
+                    "status": gap.get("status", "missing"),
+                    "why_needed": gap.get("why_needed", ""),
+                    "student_knowledge": gap.get("student_knowledge", ""),
+                    "missing_information": (
+                        gap.get("missing_information", [])
+                        if isinstance(
+                            gap.get("missing_information", []),
+                            list
+                        )
+                        else []
+                    ),
+                })
+
+            return await generate_bulk_study_notes(
+                normalized_gaps,
+                faculty_context,
+            )
 
         return await generate_study_notes(
             str(topic),
