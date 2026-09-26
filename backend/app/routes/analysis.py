@@ -273,290 +273,87 @@ async def analyze_notes(
 # =========================================================
 
 @router.post("/generate-notes")
-async def generate_notes(
-    payload: dict = Body(...)
-):
-
+async def generate_notes(payload: dict = Body(...)):
     try:
+        topic = payload.get("topic")
+        status = payload.get("status", "missing")
+        why_needed = payload.get("why_needed", "")
+        student_knowledge = payload.get("student_knowledge", "")
+        missing_information = payload.get("missing_information", [])
+        faculty_context = payload.get("faculty_context", "")
 
-        faculty_data = payload.get(
-            "faculty_data"
-        )
-
-        topic = payload.get(
-            "topic"
-        )
-
-        student_evidence = payload.get(
-            "student_evidence",
-            ""
-        )
-
-        all_gaps = payload.get(
-            "all_gaps",
-            []
-        )
-
-
-        if not faculty_data:
-
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Faculty data is required "
-                    "for note generation."
+        # Backward-compatible support for older clients.
+        if not faculty_context and payload.get("faculty_data"):
+            faculty_data = payload.get("faculty_data")
+            if isinstance(faculty_data, list):
+                faculty_context = "\n\n".join(
+                    str(page.get("content", ""))
+                    for page in faculty_data
+                    if isinstance(page, dict)
                 )
-            )
+            else:
+                faculty_context = str(faculty_data)
 
-
-        # -------------------------------------------------
-        # CONVERT FACULTY DATA TO TEXT
-        # -------------------------------------------------
-
-        if isinstance(
-            faculty_data,
-            list
-        ):
-
-            faculty_context = "\n\n".join(
-                str(
-                    page.get(
-                        "content",
-                        ""
-                    )
-                )
-                for page in faculty_data
-                if isinstance(page, dict)
-            )
-
-        else:
-
-            faculty_context = str(
-                faculty_data
-            )
-
-
-        # -------------------------------------------------
-        # GENERATE NOTES FOR ALL GAPS
-        # -------------------------------------------------
-
-        if topic == "all":
-
-            all_notes = []
-
-
-            for gap in all_gaps:
-
-                try:
-
-                    await asyncio.sleep(
-                        0.5
-                    )
-
-
-                    if isinstance(
-                        gap,
-                        dict
-                    ):
-
-                        gap_info = gap
-
-                    else:
-
-                        gap_info = {
-                            "topic": str(
-                                gap
-                            ),
-                            "status": "missing",
-                            "why_needed": "",
-                            "student_knowledge": "",
-                            "missing_information": []
-                        }
-
-
-                    gap_topic = gap_info.get(
-                        "topic",
-                        "Unknown"
-                    )
-
-                    gap_status = gap_info.get(
-                        "status",
-                        "missing"
-                    )
-
-                    gap_why_needed = gap_info.get(
-                        "why_needed",
-                        ""
-                    )
-
-                    gap_student_knowledge = gap_info.get(
-                        "student_knowledge",
-                        ""
-                    )
-
-                    gap_missing_information = gap_info.get(
-                        "missing_information",
-                        []
-                    )
-
-
-                    note = await generate_study_notes(
-
-                        gap_topic,
-
-                        gap_status,
-
-                        gap_why_needed,
-
-                        gap_student_knowledge,
-
-                        gap_missing_information,
-
-                        faculty_context
-                    )
-
-
-                    all_notes.append(
-                        note
-                    )
-
-
-                except Exception as e:
-
-                    print(
-                        f"Error generating note "
-                        f"for {gap_info.get('topic')}: "
-                        f"{str(e)}"
-                    )
-
-
-                    all_notes.append(
-                        {
-                            "topic": gap_info.get(
-                                "topic",
-                                "Unknown"
-                            ),
-
-                            "status": "error",
-
-                            "sections": [
-                                {
-                                    "heading": "Error",
-
-                                    "content": (
-                                        "Failed to generate "
-                                        "notes for this topic. "
-                                        "Please try generating "
-                                        "it individually."
-                                    )
-                                }
-                            ]
-                        }
-                    )
-
-
-            return all_notes
-
-
-        # -------------------------------------------------
-        # GENERATE NOTES FOR ONE TOPIC
-        # -------------------------------------------------
-
-        if not topic:
-
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Topic data is required "
-                    "for note generation."
-                )
-            )
-
-
-        # Frontend sends the complete topic object
-        if isinstance(
-            topic,
-            dict
-        ):
-
-            topic_name = topic.get(
-                "topic",
-                "Unknown"
-            )
-
-            status = topic.get(
-                "status",
-                "missing"
-            )
-
-            why_needed = topic.get(
-                "why_needed",
-                ""
-            )
-
-            student_knowledge = topic.get(
-                "student_knowledge",
-                student_evidence
-            )
-
-            missing_information = topic.get(
-                "missing_information",
-                []
-            )
-
-        else:
-
-            topic_name = str(
-                topic
-            )
-
-            status = "missing"
-
-            why_needed = ""
-
-            student_knowledge = (
-                student_evidence
-            )
-
+        if isinstance(missing_information, str):
+            missing_information = [missing_information]
+        if not isinstance(missing_information, list):
             missing_information = []
 
+        if not topic:
+            raise HTTPException(
+                status_code=400,
+                detail="Topic data is required for note generation."
+            )
 
-        note = await generate_study_notes(
+        # Generate one combined guide when the frontend requests all gaps.
+        if str(topic).strip().lower() in {
+            "all",
+            "all missing and partially covered topics",
+            "all missing and partially covered topics"
+        }:
+            all_gaps = payload.get("all_gaps", [])
+            if not all_gaps:
+                all_gaps = [
+                    {
+                        "topic": line.split(":", 1)[0],
+                        "status": "missing",
+                        "why_needed": "",
+                        "student_knowledge": "",
+                        "missing_information": [line],
+                    }
+                    for line in missing_information
+                    if isinstance(line, str) and line.strip()
+                ]
 
-            topic_name,
+            notes = []
+            for gap in all_gaps:
+                gap = gap if isinstance(gap, dict) else {"topic": str(gap)}
+                notes.append(await generate_study_notes(
+                    gap.get("topic", "Unknown"),
+                    gap.get("status", "missing"),
+                    gap.get("why_needed", ""),
+                    gap.get("student_knowledge", ""),
+                    gap.get("missing_information", []) if isinstance(gap.get("missing_information", []), list) else [],
+                    faculty_context,
+                ))
+            return notes
 
-            status,
-
-            why_needed,
-
-            student_knowledge,
-
+        return await generate_study_notes(
+            str(topic),
+            str(status),
+            str(why_needed),
+            str(student_knowledge),
             missing_information,
-
-            faculty_context
+            str(faculty_context),
         )
-
-
-        return note
-
 
     except HTTPException:
         raise
-
-
     except Exception as e:
-
-        print(
-            f"Notes Generation Error: "
-            f"{str(e)}"
-        )
-
+        print(f"Notes Generation Error: {type(e).__name__}: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Failed to generate study notes: "
-                f"{str(e)}"
-            )
+            detail=f"Failed to generate study notes: {str(e)}"
         )
 
 
@@ -565,87 +362,33 @@ async def generate_notes(
 # =========================================================
 
 @router.post("/chat")
-async def chat(
-    payload: dict = Body(...)
-):
-
+async def chat(payload: dict = Body(...)):
     try:
+        # Current frontend contract: {notes, question}.
+        # Also accept the previous {context, message} contract.
+        question = payload.get("question") or payload.get("message") or ""
+        notes = payload.get("notes", payload.get("context", {}))
 
-        message = payload.get(
-            "message",
-            ""
-        )
-
-        context = payload.get(
-            "context",
-            {}
-        )
-
-
-        if not message.strip():
-
+        if not str(question).strip():
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    "Message cannot be empty."
-                )
+                detail="Question cannot be empty."
             )
 
-
-        # The current AI service expects:
-        #
-        # chat_with_notes(
-        #     notes,
-        #     question
-        # )
-        #
-        # The frontend currently sends the
-        # analysis result as "context".
-        #
-        # Convert that context into text.
-
-        if isinstance(
-            context,
-            str
-        ):
-
-            notes_context = context
-
+        if isinstance(notes, str):
+            notes_context = notes
         else:
+            notes_context = json.dumps(notes, indent=2)
 
-            notes_context = json.dumps(
-                context,
-                indent=2
-            )
+        answer = await chat_with_notes(notes_context, str(question))
 
-
-        response = await chat_with_notes(
-
-            notes_context,
-
-            message
-        )
-
-
-        return {
-            "response": response
-        }
-
+        return {"answer": answer}
 
     except HTTPException:
         raise
-
-
     except Exception as e:
-
-        print(
-            f"Chat Error: "
-            f"{str(e)}"
-        )
-
+        print(f"Chat Error: {type(e).__name__}: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=(
-                f"Chat failed: {str(e)}"
-            )
+            detail=f"Chat failed: {str(e)}"
         )
