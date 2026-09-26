@@ -1,4 +1,4 @@
-﻿import os
+import os
 
 from dotenv import load_dotenv
 
@@ -11,6 +11,18 @@ load_dotenv()
 
 
 # ---------------------------------------------------------
+# GEMINI API KEY
+# ---------------------------------------------------------
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+if not GEMINI_API_KEY:
+    raise RuntimeError(
+        "GEMINI_API_KEY is not set."
+    )
+
+
+# ---------------------------------------------------------
 # GROQ API KEY
 # ---------------------------------------------------------
 
@@ -20,6 +32,16 @@ if not GROQ_API_KEY:
     raise RuntimeError(
         "GROQ_API_KEY is not set."
     )
+
+
+# ---------------------------------------------------------
+# GEMINI MODEL
+# ---------------------------------------------------------
+
+GEMINI_MODEL = os.getenv(
+    "GEMINI_MODEL",
+    "gemini-3.8-flash",
+)
 
 
 # ---------------------------------------------------------
@@ -36,6 +58,14 @@ GROQ_TEXT_MODEL = os.getenv(
     "openai/gpt-oss-120b",
 )
 
+
+# ---------------------------------------------------------
+# STARTUP LOGGING
+# ---------------------------------------------------------
+
+print(
+    f"Gemini Model: {GEMINI_MODEL}"
+)
 
 print(
     f"Groq Vision Model: {GROQ_VISION_MODEL}"
