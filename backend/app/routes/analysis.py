@@ -169,7 +169,35 @@ async def analyze_notes(
             []
         )
 
+        # Ensure every gap topic has a faculty-grounded summary.
+        # This lets the frontend show a useful definition even if
+        # the gap-analysis model omits the summary field.
+        faculty_by_topic = {
+            str(item.get("topic", "")).strip().lower(): item
+            for item in faculty_topics
+            if isinstance(item, dict) and item.get("topic")
+        }
+
         if isinstance(analyzed_topics, list):
+            for topic in analyzed_topics:
+                if not isinstance(topic, dict):
+                    continue
+
+                if not str(topic.get("summary", "")).strip():
+                    faculty_item = faculty_by_topic.get(
+                        str(topic.get("topic", "")).strip().lower()
+                    )
+                    if faculty_item:
+                        topic["summary"] = faculty_item.get(
+                            "description",
+                            ""
+                        ) or "This topic is required according to the faculty material."
+
+                if not topic.get("why_needed"):
+                    topic["why_needed"] = topic.get(
+                        "summary",
+                        ""
+                    )
 
             for topic in analyzed_topics:
 
