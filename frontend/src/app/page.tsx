@@ -192,6 +192,7 @@ export default function Home() {
           why_needed: "These topics were identified by the gap analysis as missing or only partially covered in the student's notes.",
           student_knowledge: allTopics.map((item) => `${item.topic}: ${item.student_knowledge || "Not sufficiently covered"}`).join("\n"),
           missing_information: allTopics.flatMap((item) => item.missing_information || [item.summary || ""]),
+          all_gaps: allTopics,
           faculty_context: JSON.stringify(results?.faculty_knowledge_map || currentFacultyData || ""),
         };
       } else {
