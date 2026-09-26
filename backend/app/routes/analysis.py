@@ -202,7 +202,7 @@ async def analyze_notes(
                 ]:
 
                     partially_covered_topics.append(
-                        topic
+                        topic.get("topic", "Unknown")
                     )
 
                 elif status in [
