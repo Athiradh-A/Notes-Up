@@ -499,7 +499,8 @@ export default function Home() {
 
             <div className="flex justify-end">
               <button
-                onClick={() => generateNotes(undefined, true)}
+                type="button"
+                onClick={() => void generateNotes(undefined, true)}
                 disabled={generatingId === "all"}
                 className="px-6 py-3 bg-white text-black rounded-xl font-bold text-sm hover:bg-gray-200 transition-all flex items-center gap-2 shadow-lg disabled:opacity-50"
               >
@@ -606,7 +607,8 @@ export default function Home() {
                         </div>
 
                         <button
-                          onClick={() => generateNotes(item)}
+                          type="button"
+                          onClick={() => void generateNotes(item)}
                           disabled={generatingId === item.topic}
                           className="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-bold text-blue-400 transition-all flex items-center gap-2 whitespace-nowrap disabled:opacity-50"
                         >
@@ -717,12 +719,22 @@ export default function Home() {
                     <div className="space-y-12">
                       {activeNotes.content.map((note, idx) => (
                         <div key={idx} className="space-y-6 pb-8 border-b border-white/5 last:border-0">
-                          <h4 className="text-2xl font-bold text-blue-400">{note.topic || "Study Topic"}</h4>
+                          <div>
+                            <div className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold mb-2">Topic {idx + 1}</div>
+                            <h4 className="text-2xl md:text-3xl font-bold tracking-tight text-white">{note.topic || "Study Topic"}</h4>
+                          </div>
 
                           {note.why_needed && (
                             <div className="p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
                               <h6 className="text-xs font-bold text-blue-400 uppercase tracking-widest mb-1">Why this is needed</h6>
                               {renderNoteText(note.why_needed)}
+                            </div>
+                          )}
+
+                          {note.student_knowledge && (
+                            <div className="p-4 bg-white/[0.025] border border-white/10 rounded-xl">
+                              <h6 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">What you already know</h6>
+                              {renderNoteText(note.student_knowledge)}
                             </div>
                           )}
 
@@ -785,12 +797,10 @@ export default function Home() {
                         {activeNotes.content.sections?.map((s, sidx) => (
                           <div key={sidx} className="space-y-3">
                             <h4 className="text-lg font-bold text-white">{s.heading}</h4>
-                            <p className="text-gray-400 text-sm leading-relaxed whitespace-pre-wrap">{s.content}</p>
+                            {renderNoteText(s.content)}
 
                             {s.equations?.map((eq, eqidx) => (
-                              <div key={eqidx} className="bg-black/40 p-3 rounded-lg font-mono text-blue-300 text-center my-2 border border-blue-500/20">
-                                {eq}
-                              </div>
+                              <div key={eqidx}>{renderEquation(eq)}</div>
                             ))}
                           </div>
                         ))}
