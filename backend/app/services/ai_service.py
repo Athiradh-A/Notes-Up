@@ -1,5 +1,6 @@
 ﻿import base64
 import json
+import re
 from typing import List, Dict, Any
 
 from fastapi import UploadFile
@@ -40,6 +41,38 @@ def clean_json_response(text: str) -> str:
         text = text[:-3]
 
     return text.strip()
+
+
+def parse_json_response(content: str, label: str) -> Any:
+    cleaned = clean_json_response(content)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    for opener, closer in [("{", "}"), ("[", "]")]:
+        start = cleaned.find(opener)
+        end = cleaned.rfind(closer)
+        if start >= 0 and end > start:
+            try:
+                return json.loads(cleaned[start:end + 1])
+            except json.JSONDecodeError:
+                pass
+
+    print(f"{label} JSON ERROR:", repr(cleaned[:4000]))
+    raise ValueError(f"Failed to parse {label.lower()} as JSON.")
+
+
+def normalize_topic_list(data: Any) -> List[Dict[str, Any]]:
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        items = data.get("topics", [])
+        if not isinstance(items, list):
+            items = data.get("faculty_topics", data.get("student_topics", []))
+    else:
+        items = []
+    return [item for item in items if isinstance(item, dict)]
 
 
 # ---------------------------------------------------------
@@ -244,28 +277,18 @@ Faculty material:
 
         temperature=0.1,
 
-        max_completion_tokens=8192,
+        max_completion_tokens=4096,
+
+        response_format={"type": "json_object"},
 
         stream=False,
     )
 
     content = response.choices[0].message.content
 
-    content = clean_json_response(content)
-
-    try:
-        return json.loads(content)
-
-    except json.JSONDecodeError:
-
-        print(
-            "FACULTY TOPIC JSON ERROR:",
-            repr(content)
-        )
-
-        raise ValueError(
-            "Failed to parse faculty topics as JSON."
-        )
+    return normalize_topic_list(
+        parse_json_response(content, "FACULTY TOPICS")
+    )
 
 
 # ---------------------------------------------------------
@@ -329,21 +352,9 @@ Student notes:
 
     content = response.choices[0].message.content
 
-    content = clean_json_response(content)
-
-    try:
-        return json.loads(content)
-
-    except json.JSONDecodeError:
-
-        print(
-            "STUDENT TOPIC JSON ERROR:",
-            repr(content)
-        )
-
-        raise ValueError(
-            "Failed to parse student topics as JSON."
-        )
+    return normalize_topic_list(
+        parse_json_response(content, "STUDENT TOPICS")
+    )
 
 
 # ---------------------------------------------------------
@@ -430,22 +441,13 @@ STUDENT TOPICS:
 
     content = response.choices[0].message.content
 
-    content = clean_json_response(content)
-
-    try:
-        result = json.loads(content)
-
-    except json.JSONDecodeError:
-
-        print(
-            "GAP ANALYSIS JSON ERROR:",
-            repr(content)
-        )
-
-        raise ValueError(
-            "Failed to parse gap analysis as JSON."
-        )
-
+    result = parse_json_response(content, "GAP ANALYSIS")
+    if isinstance(result, list):
+        return {"topics": result}
+    if not isinstance(result, dict):
+        raise ValueError("Gap analysis returned an invalid JSON structure.")
+    if not isinstance(result.get("topics"), list):
+        result["topics"] = []
     return result
 
 
@@ -549,21 +551,10 @@ Return JSON in exactly this structure:
 
     content = response.choices[0].message.content
 
-    content = clean_json_response(content)
-
-    try:
-        return json.loads(content)
-
-    except json.JSONDecodeError:
-
-        print(
-            "STUDY NOTES JSON ERROR:",
-            repr(content)
-        )
-
-        raise ValueError(
-            "Failed to parse generated study notes as JSON."
-        )
+    result = parse_json_response(content, "STUDY NOTES")
+    if not isinstance(result, dict):
+        raise ValueError("Generated study notes returned an invalid JSON structure.")
+    return result
 
 
 # ---------------------------------------------------------
