@@ -3,6 +3,7 @@ uvicorn[standard]
 python-multipart
 python-dotenv
 groq
+google-genai
 pypdf
 python-pptx
 Pillow
