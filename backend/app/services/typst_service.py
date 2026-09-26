@@ -37,6 +37,12 @@ def escape_typst_title(value: Any) -> str:
 
 def replace_braced_command(equation: str, command: str, function: str) -> str:
     pattern = rf"{re.escape(command)}\{{([^{{}}]+)\}}"
+    if function == '"':
+        return re.sub(
+            pattern,
+            lambda match: '"' + match.group(1).replace('"', '\\"') + '"',
+            equation,
+        )
     return re.sub(pattern, rf"{function}(\1)", equation)
 
 
