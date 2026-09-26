@@ -7,3 +7,4 @@ google-genai
 pypdf
 python-pptx
 Pillow
+typst>=0.15,<0.16
