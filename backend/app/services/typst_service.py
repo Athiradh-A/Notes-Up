@@ -187,9 +187,14 @@ def build_study_guide_typst(
                 equations = section.get("equations")
                 if isinstance(equations, list):
                     for equation in equations:
-                        rendered = equation_to_typst(equation)
-                        if rendered:
-                            lines.append(f"$ {rendered} $")
+                        equation_text = clean_text(equation)
+                        if equation_text:
+                            # Keep PDF generation robust even when the AI returns
+                            # LaTeX syntax that Typst does not understand. The
+                            # web UI still renders equations with KaTeX.
+                            lines.append(
+                                f"*Equation:* {escape_typst_text(equation_text)}"
+                            )
                             lines.append("")
 
         exam_points = note.get("exam_points")
