@@ -36,14 +36,36 @@ def escape_typst_title(value: Any) -> str:
 
 
 def replace_braced_command(equation: str, command: str, function: str) -> str:
-    pattern = rf"{re.escape(command)}\{{([^{{}}]+)\}}"
+    pattern = rf"{re.escape(command)}\{{([^{{}}]*)\}}"
     if function == '"':
         return re.sub(
             pattern,
             lambda match: '"' + match.group(1).replace('"', '\\"') + '"',
             equation,
         )
-    return re.sub(pattern, rf"{function}(\1)", equation)
+    return re.sub(pattern, lambda match: f"{function}({match.group(1)})", equation)
+
+
+def replace_fraction_commands(equation: str) -> str:
+    # Typst uses frac(numerator, denominator), while LaTeX uses
+    # \frac{numerator}{denominator}.
+    fraction_pattern = r"\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}"
+    while re.search(fraction_pattern, equation):
+        equation = re.sub(
+            fraction_pattern,
+            lambda match: f"frac({match.group(1)}, {match.group(2)})",
+            equation,
+        )
+    return equation
+
+
+def replace_sqrt_commands(equation: str) -> str:
+    sqrt_pattern = r"\\sqrt\s*\{([^{}]*)\}"
+    return re.sub(
+        sqrt_pattern,
+        lambda match: f"sqrt({match.group(1)})",
+        equation,
+    )
 
 
 def equation_to_typst(value: Any) -> str:
@@ -51,7 +73,10 @@ def equation_to_typst(value: Any) -> str:
     if not equation:
         return ""
 
-    equation = equation.strip("$ ")
+    # Strip common LaTeX delimiters before putting the expression inside
+    # a Typst math block.
+    equation = equation.strip().strip("$").strip()
+
     equation = equation.replace("\\left", "").replace("\\right", "")
     equation = equation.replace("\\cdot", " dot ")
     equation = equation.replace("\\times", " times ")
@@ -91,13 +116,11 @@ def equation_to_typst(value: Any) -> str:
     }.items():
         equation = equation.replace(latex, typst_name)
 
-    equation = replace_braced_command(equation, "\\frac", "frac")
-    equation = replace_braced_command(equation, "\\sqrt", "sqrt")
+    equation = replace_fraction_commands(equation)
+    equation = replace_sqrt_commands(equation)
 
     # LaTeX text commands contain ordinary words. In Typst math mode,
-    # multi-letter words are interpreted as variable/function names, so
-    # "\\text{variables}" would otherwise become an undefined variable.
-    # Convert text commands to quoted math text instead.
+    # multi-letter words are interpreted as variable/function names.
     equation = replace_braced_command(equation, "\\textbf", '"')
     equation = replace_braced_command(equation, "\\text", '"')
     equation = replace_braced_command(equation, "\\mathrm", '"')
@@ -187,14 +210,14 @@ def build_study_guide_typst(
                 equations = section.get("equations")
                 if isinstance(equations, list):
                     for equation in equations:
-                        equation_text = clean_text(equation)
+                        equation_text = equation_to_typst(equation)
                         if equation_text:
-                            # Keep PDF generation robust even when the AI returns
-                            # LaTeX syntax that Typst does not understand. The
-                            # web UI still renders equations with KaTeX.
-                            lines.append(
-                                f"*Equation:* {escape_typst_text(equation_text)}"
-                            )
+                            # Render equations as real Typst math instead of
+                            # plain escaped text. This keeps PDF equations
+                            # visually consistent with the KaTeX web UI.
+                            lines.append("#align(center)[")
+                            lines.append(f"  $ {equation_text} $")
+                            lines.append("]")
                             lines.append("")
 
         exam_points = note.get("exam_points")
