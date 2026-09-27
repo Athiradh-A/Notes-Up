@@ -4,6 +4,7 @@ python-multipart
 python-dotenv
 groq
 google-genai
+openai
 pypdf
 python-pptx
 Pillow
