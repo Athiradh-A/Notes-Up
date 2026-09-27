@@ -467,7 +467,9 @@ export default function Home() {
       URL.revokeObjectURL(url);
     } catch (error) {
       console.error("PDF generation error:", error);
-      alert("Could not generate the PDF. Please try again.");
+      const message =
+        error instanceof Error ? error.message : "Unknown PDF generation error";
+      alert("PDF generation failed: " + message);
     }
   };
 
