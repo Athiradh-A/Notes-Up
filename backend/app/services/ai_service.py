@@ -236,35 +236,61 @@ async def transcribe_images(image_files: List[UploadFile]) -> str:
                 f"provider=Gemini | model={GEMINI_MODEL}"
             )
 
-            try:
-                response = gemini_client.models.generate_content(
-                    model=GEMINI_MODEL,
-                    contents=[
-                        transcription_prompt,
-                        types.Part.from_bytes(
-                            data=image_bytes,
-                            mime_type=content_type,
-                        ),
-                    ],
-                    config=types.GenerateContentConfig(
-                        temperature=0.2,
-                        max_output_tokens=1200,
-                    ),
-                )
-                transcription = response.text
-                if not transcription:
-                    raise ValueError("Gemini returned an empty transcription.")
-                print(
-                    f"VISION SUCCESS | file={img_file.filename} | provider=Gemini"
-                )
+            gemini_errors = []
 
-            except Exception as gemini_error:
+            # Gemini is always the primary vision provider. Retry once for
+            # transient failures such as HTTP 503/high-demand responses.
+            for attempt in range(1, 3):
+                try:
+                    print(
+                        f"GEMINI VISION ATTEMPT | file={img_file.filename} | "
+                        f"attempt={attempt}/2"
+                    )
+
+                    response = gemini_client.models.generate_content(
+                        model=GEMINI_MODEL,
+                        contents=[
+                            transcription_prompt,
+                            types.Part.from_bytes(
+                                data=image_bytes,
+                                mime_type=content_type,
+                            ),
+                        ],
+                        config=types.GenerateContentConfig(
+                            temperature=0.2,
+                            max_output_tokens=1200,
+                        ),
+                    )
+                    transcription = response.text
+                    if not transcription:
+                        raise ValueError(
+                            "Gemini returned an empty transcription."
+                        )
+
+                    print(
+                        f"VISION SUCCESS | file={img_file.filename} | "
+                        f"provider=Gemini"
+                    )
+                    break
+
+                except Exception as gemini_error:
+                    gemini_errors.append(gemini_error)
+
+                    print(
+                        f"GEMINI VISION ERROR | file={img_file.filename} | "
+                        f"attempt={attempt}/2 | "
+                        f"type={type(gemini_error).__name__} | "
+                        f"error={repr(gemini_error)}"
+                    )
+
+                    if attempt < 2:
+                        print("GEMINI VISION RETRY | waiting=1s")
+                        await asyncio.sleep(1)
+            else:
                 print(
-                    f"GEMINI VISION ERROR | file={img_file.filename} | "
-                    f"type={type(gemini_error).__name__} | "
-                    f"error={repr(gemini_error)}"
+                    "FALLBACK | provider=Groq | task=VISION | "
+                    "reason=Gemini failed after 2 attempts"
                 )
-                print("FALLBACK | provider=Groq | task=VISION")
 
                 base64_image = base64.b64encode(image_bytes).decode("utf-8")
 
@@ -285,7 +311,9 @@ async def transcribe_images(image_files: List[UploadFile]) -> str:
                             },
                         ],
                     }],
-                    max_completion_tokens=1200,
+                    # Groq's current on-demand OTPM limit is 1000 for this
+                    # model, so keep the requested output below that ceiling.
+                    max_completion_tokens=900,
                     temperature=0.2,
                     reasoning_effort="none",
                     stream=False,
@@ -297,7 +325,8 @@ async def transcribe_images(image_files: List[UploadFile]) -> str:
                     raise ValueError("Groq returned an empty transcription.")
 
                 print(
-                    f"VISION SUCCESS | file={img_file.filename} | provider=Groq"
+                    f"VISION SUCCESS | file={img_file.filename} | "
+                    f"provider=Groq"
                 )
 
             all_transcriptions.append(
