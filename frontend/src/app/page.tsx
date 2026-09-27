@@ -442,12 +442,33 @@ export default function Home() {
 
   const downloadNotesPdf = async (notes: ActiveNotes) => {
     try {
+      const pdfNotes = Array.isArray(notes.content)
+        ? notes.content.filter((note) => note && typeof note === "object")
+        : notes.content;
+
+      if (
+        !pdfNotes ||
+        (Array.isArray(pdfNotes) && pdfNotes.length === 0) ||
+        (typeof pdfNotes === "object" &&
+          !Array.isArray(pdfNotes) &&
+          Object.keys(pdfNotes).length === 0)
+      ) {
+        throw new Error("No generated study notes are available to export. Generate the notes first.");
+      }
+
+      console.log("PDF EXPORT REQUEST", {
+        apiUrl: API_URL,
+        title: notes.topic || "AI Study Guide",
+        contentType: Array.isArray(pdfNotes) ? "array" : typeof pdfNotes,
+        itemCount: Array.isArray(pdfNotes) ? pdfNotes.length : 1,
+      });
+
       const response = await fetch(`${API_URL}/generate-pdf`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: notes.topic || "AI Study Guide",
-          notes: notes.content,
+          notes: pdfNotes,
         }),
       });
 
