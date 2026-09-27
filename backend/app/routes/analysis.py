@@ -412,7 +412,20 @@ async def generate_notes(payload: dict = Body(...)):
 async def generate_pdf(payload: dict = Body(...)):
     try:
         notes = payload.get("notes")
+
+        # Accept the current {notes: ...} contract and a safe fallback
+        # for clients that may send the generated content under {content: ...}.
+        if notes is None:
+            notes = payload.get("content")
+
         title = str(payload.get("title") or "AI Study Guide")
+
+        print(
+            "PDF REQUEST | "
+            f"title={title!r} | "
+            f"payload_keys={list(payload.keys())} | "
+            f"notes_type={type(notes).__name__}"
+        )
 
         if not notes:
             raise HTTPException(
