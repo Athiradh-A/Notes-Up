@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import time
@@ -7,6 +8,7 @@ from fastapi import UploadFile
 from groq import Groq
 from google import genai
 from google.genai import types
+from openai import OpenAI
 
 from app.core.config import (
     GEMINI_API_KEY,
@@ -14,10 +16,23 @@ from app.core.config import (
     GROQ_API_KEY,
     GROQ_VISION_MODEL,
     GROQ_TEXT_MODEL,
+    OPENROUTER_API_KEY,
+    OPENROUTER_VISION_MODEL,
+    OPENROUTER_VISION_FALLBACK_MODEL,
+    OPENROUTER_TEXT_MODEL,
 )
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 groq_client = Groq(api_key=GROQ_API_KEY)
+
+openrouter_client = (
+    OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=OPENROUTER_API_KEY,
+    )
+    if OPENROUTER_API_KEY
+    else None
+)
 
 
 def clean_json_response(text: str) -> str:
@@ -117,6 +132,50 @@ def generate_gemini(
     return content
 
 
+def generate_openrouter(
+    prompt: str,
+    system_instruction: str = "",
+    json_mode: bool = False,
+    max_completion_tokens: int = 8192,
+    temperature: float = 0.2,
+) -> str:
+    if openrouter_client is None:
+        raise RuntimeError("OPENROUTER_API_KEY is not configured.")
+
+    print(
+        f"AI REQUEST | task=TEXT | provider=OpenRouter | "
+        f"model={OPENROUTER_TEXT_MODEL}"
+    )
+
+    kwargs = {
+        "model": OPENROUTER_TEXT_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": system_instruction,
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+        "temperature": temperature,
+        "max_tokens": max_completion_tokens,
+    }
+
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+
+    response = openrouter_client.chat.completions.create(**kwargs)
+    content = response.choices[0].message.content
+
+    if not content:
+        raise ValueError("OpenRouter returned an empty response.")
+
+    print("OPENROUTER SUCCESS | task=TEXT")
+    return content
+
+
 def generate_groq(
     prompt: str,
     system_instruction: str = "",
@@ -153,13 +212,15 @@ def generate_with_fallback(
     temperature: float = 0.2,
 ) -> str:
     """
-    Gemini is always the primary provider.
+    Fallback order for text generation:
 
-    Groq is used only after Gemini has actually failed. We retry Gemini
-    once before falling back so transient API/network errors do not
-    immediately send requests to Groq.
+    1. Gemini
+    2. OpenRouter Qwen3.8 27B :free
+    3. Groq
+
+    Gemini is retried once before moving to the next provider.
+    OpenRouter is skipped when no OPENROUTER_API_KEY is configured.
     """
-    gemini_errors = []
 
     for attempt in range(1, 3):
         try:
@@ -177,8 +238,6 @@ def generate_with_fallback(
             )
 
         except Exception as gemini_error:
-            gemini_errors.append(gemini_error)
-
             print(
                 f"GEMINI ERROR | attempt={attempt}/2 | "
                 f"type={type(gemini_error).__name__} | "
@@ -189,9 +248,32 @@ def generate_with_fallback(
                 print("GEMINI RETRY | waiting=1s")
                 time.sleep(1)
 
+    if openrouter_client is not None:
+        try:
+            print(
+                "FALLBACK | provider=OpenRouter | "
+                f"model={OPENROUTER_TEXT_MODEL} | "
+                "reason=Gemini failed after 2 attempts"
+            )
+
+            return generate_openrouter(
+                prompt=prompt,
+                system_instruction=system_instruction,
+                json_mode=json_mode,
+                max_completion_tokens=max_output_tokens,
+                temperature=temperature,
+            )
+
+        except Exception as openrouter_error:
+            print(
+                "OPENROUTER ERROR | "
+                f"type={type(openrouter_error).__name__} | "
+                f"error={repr(openrouter_error)}"
+            )
+
     print(
         "FALLBACK | provider=Groq | "
-        "reason=Gemini failed after 2 attempts"
+        "reason=Gemini and OpenRouter unavailable"
     )
 
     return generate_groq(
@@ -201,6 +283,102 @@ def generate_with_fallback(
         max_completion_tokens=max_output_tokens,
         temperature=temperature,
     )
+
+
+def transcribe_with_openrouter_vision(
+    image_bytes: bytes,
+    content_type: str,
+    transcription_prompt: str,
+    model: str,
+    max_tokens: int = 1200,
+) -> str:
+    if openrouter_client is None:
+        raise RuntimeError("OPENROUTER_API_KEY is not configured.")
+
+    base64_image = base64.b64encode(image_bytes).decode("utf-8")
+
+    print(
+        f"VISION REQUEST | provider=OpenRouter | "
+        f"model={model}"
+    )
+
+    response = openrouter_client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": transcription_prompt,
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": (
+                                f"data:{content_type};"
+                                f"base64,{base64_image}"
+                            )
+                        },
+                    },
+                ],
+            }
+        ],
+        temperature=0.2,
+        max_tokens=max_tokens,
+    )
+
+    transcription = response.choices[0].message.content
+
+    if not transcription:
+        raise ValueError(
+            f"OpenRouter returned an empty transcription for {model}."
+        )
+
+    return transcription
+
+
+def transcribe_with_groq_vision(
+    image_bytes: bytes,
+    content_type: str,
+    transcription_prompt: str,
+) -> str:
+    base64_image = base64.b64encode(image_bytes).decode("utf-8")
+
+    print(
+        "VISION REQUEST | provider=Groq | "
+        f"model={GROQ_VISION_MODEL}"
+    )
+
+    vision_response = groq_client.chat.completions.create(
+        model=GROQ_VISION_MODEL,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": transcription_prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": (
+                            f"data:{content_type};"
+                            f"base64,{base64_image}"
+                        )
+                    },
+                },
+            ],
+        }],
+        max_completion_tokens=900,
+        temperature=0.2,
+        reasoning_effort="none",
+        stream=False,
+    )
+
+    transcription = vision_response.choices[0].message.content
+
+    if not transcription:
+        raise ValueError("Groq returned an empty transcription.")
+
+    return transcription
 
 
 async def transcribe_images(image_files: List[UploadFile]) -> str:
@@ -236,9 +414,9 @@ async def transcribe_images(image_files: List[UploadFile]) -> str:
                 f"provider=Gemini | model={GEMINI_MODEL}"
             )
 
-            gemini_errors = []
+            gemini_succeeded = False
 
-            # Gemini is always the primary vision provider. Retry once for
+            # Gemini is the primary vision provider. Retry once for
             # transient failures such as HTTP 503/high-demand responses.
             for attempt in range(1, 3):
                 try:
@@ -261,7 +439,9 @@ async def transcribe_images(image_files: List[UploadFile]) -> str:
                             max_output_tokens=1200,
                         ),
                     )
+
                     transcription = response.text
+
                     if not transcription:
                         raise ValueError(
                             "Gemini returned an empty transcription."
@@ -269,13 +449,12 @@ async def transcribe_images(image_files: List[UploadFile]) -> str:
 
                     print(
                         f"VISION SUCCESS | file={img_file.filename} | "
-                        f"provider=Gemini"
+                        "provider=Gemini"
                     )
+                    gemini_succeeded = True
                     break
 
                 except Exception as gemini_error:
-                    gemini_errors.append(gemini_error)
-
                     print(
                         f"GEMINI VISION ERROR | file={img_file.filename} | "
                         f"attempt={attempt}/2 | "
@@ -286,48 +465,90 @@ async def transcribe_images(image_files: List[UploadFile]) -> str:
                     if attempt < 2:
                         print("GEMINI VISION RETRY | waiting=1s")
                         await asyncio.sleep(1)
-            else:
-                print(
-                    "FALLBACK | provider=Groq | task=VISION | "
-                    "reason=Gemini failed after 2 attempts"
-                )
 
-                base64_image = base64.b64encode(image_bytes).decode("utf-8")
+            if not gemini_succeeded:
+                transcription = None
 
-                vision_response = groq_client.chat.completions.create(
-                    model=GROQ_VISION_MODEL,
-                    messages=[{
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": transcription_prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": (
-                                        f"data:{content_type};"
-                                        f"base64,{base64_image}"
-                                    )
-                                },
-                            },
-                        ],
-                    }],
-                    # Groq's current on-demand OTPM limit is 1000 for this
-                    # model, so keep the requested output below that ceiling.
-                    max_completion_tokens=900,
-                    temperature=0.2,
-                    reasoning_effort="none",
-                    stream=False,
-                )
+                # First vision fallback: Qwen3.8 27B free.
+                if openrouter_client is not None:
+                    try:
+                        print(
+                            "FALLBACK | provider=OpenRouter | "
+                            f"model={OPENROUTER_VISION_MODEL} | "
+                            "task=VISION"
+                        )
 
-                transcription = vision_response.choices[0].message.content
+                        transcription = transcribe_with_openrouter_vision(
+                            image_bytes=image_bytes,
+                            content_type=content_type,
+                            transcription_prompt=transcription_prompt,
+                            model=OPENROUTER_VISION_MODEL,
+                            max_tokens=1200,
+                        )
 
+                        print(
+                            f"VISION SUCCESS | file={img_file.filename} | "
+                            f"provider=OpenRouter | "
+                            f"model={OPENROUTER_VISION_MODEL}"
+                        )
+
+                    except Exception as openrouter_error:
+                        print(
+                            "OPENROUTER VISION ERROR | "
+                            f"file={img_file.filename} | "
+                            f"type={type(openrouter_error).__name__} | "
+                            f"error={repr(openrouter_error)}"
+                        )
+
+                # Second vision fallback: Nemotron 3 Nano Omni free.
+                if not transcription and openrouter_client is not None:
+                    try:
+                        print(
+                            "FALLBACK | provider=OpenRouter | "
+                            f"model={OPENROUTER_VISION_FALLBACK_MODEL} | "
+                            "task=VISION"
+                        )
+
+                        transcription = transcribe_with_openrouter_vision(
+                            image_bytes=image_bytes,
+                            content_type=content_type,
+                            transcription_prompt=transcription_prompt,
+                            model=OPENROUTER_VISION_FALLBACK_MODEL,
+                            max_tokens=1200,
+                        )
+
+                        print(
+                            f"VISION SUCCESS | file={img_file.filename} | "
+                            f"provider=OpenRouter | "
+                            f"model={OPENROUTER_VISION_FALLBACK_MODEL}"
+                        )
+
+                    except Exception as openrouter_error:
+                        print(
+                            "OPENROUTER VISION FALLBACK ERROR | "
+                            f"file={img_file.filename} | "
+                            f"type={type(openrouter_error).__name__} | "
+                            f"error={repr(openrouter_error)}"
+                        )
+
+                # Final vision fallback: Groq.
                 if not transcription:
-                    raise ValueError("Groq returned an empty transcription.")
+                    print(
+                        "FALLBACK | provider=Groq | "
+                        "task=VISION | "
+                        "reason=Gemini + OpenRouter failed"
+                    )
 
-                print(
-                    f"VISION SUCCESS | file={img_file.filename} | "
-                    f"provider=Groq"
-                )
+                    transcription = transcribe_with_groq_vision(
+                        image_bytes=image_bytes,
+                        content_type=content_type,
+                        transcription_prompt=transcription_prompt,
+                    )
+
+                    print(
+                        f"VISION SUCCESS | file={img_file.filename} | "
+                        "provider=Groq"
+                    )
 
             all_transcriptions.append(
                 f"--- Note {i + 1}: {img_file.filename} ---\n"
