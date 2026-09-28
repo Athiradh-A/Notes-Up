@@ -3,12 +3,40 @@ import os
 import re
 from pypdf import PdfReader
 from pptx import Presentation
+import fitz
 from fastapi import UploadFile
 from typing import List, Dict
 
 def sanitize_filename(filename: str) -> str:
     """Removes potentially dangerous characters from filenames."""
     return re.sub(r'[^a-zA-Z0-9._-]', '_', os.path.basename(filename))
+
+async def render_pdf_to_images(file: UploadFile) -> List[UploadFile]:
+    """Render each PDF page as a PNG UploadFile for handwriting vision analysis."""
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise ValueError(f"PDF file is empty: {file.filename}")
+
+    try:
+        pdf = fitz.open(stream=file_bytes, filetype="pdf")
+        rendered_pages = []
+        matrix = fitz.Matrix(2, 2)
+
+        for index, page in enumerate(pdf):
+            pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+            png_bytes = pixmap.tobytes("png")
+            rendered_pages.append(
+                UploadFile(
+                    filename=f"{os.path.splitext(file.filename or 'notes')[0]}_page_{index + 1}.png",
+                    file=io.BytesIO(png_bytes),
+                )
+            )
+
+        pdf.close()
+        return rendered_pages
+    except Exception as e:
+        print(f"Error rendering handwritten PDF {file.filename}: {e}")
+        raise ValueError(f"Could not render handwritten PDF: {e}")
 
 async def extract_text(file: UploadFile) -> List[Dict]:
     """
