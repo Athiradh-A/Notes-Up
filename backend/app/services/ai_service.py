@@ -565,6 +565,389 @@ async def transcribe_images(image_files: List[UploadFile]) -> str:
     return "\n".join(all_transcriptions)
 
 
+async def analyze_materials_unified(
+    faculty_text: str,
+    image_files: List[UploadFile],
+) -> Dict[str, Any]:
+    """
+    Perform the complete Note'sUp analysis in one multimodal reasoning request.
+
+    Local Python extracts faculty PDF/PPT text first. The AI then receives the
+    faculty text plus all handwritten-note images together and returns:
+    - faculty knowledge map
+    - student knowledge map
+    - MISSING / PARTIAL / MASTERED classification
+    - targeted study notes for missing/partial topics
+
+    Provider order:
+    1. OpenRouter Qwen3.8 27B
+    2. OpenRouter Nemotron Omni
+    3. Gemini
+    4. Groq
+    """
+
+    if not image_files:
+        raise ValueError("At least one student note image is required.")
+
+    image_parts_openrouter = []
+    image_parts_gemini = []
+    image_parts_groq = []
+
+    for index, image_file in enumerate(image_files):
+        image_bytes = await image_file.read()
+
+        if not image_bytes:
+            raise ValueError(f"Image file is empty: {image_file.filename}")
+
+        content_type = image_file.content_type or "image/jpeg"
+        base64_image = base64.b64encode(image_bytes).decode("utf-8")
+
+        print(
+            f"UNIFIED INPUT | image={index + 1}/{len(image_files)} | "
+            f"file={image_file.filename} | type={content_type} | "
+            f"size={len(image_bytes)} bytes"
+        )
+
+        image_parts_openrouter.append({
+            "type": "image_url",
+            "image_url": {
+                "url": (
+                    f"data:{content_type};"
+                    f"base64,{base64_image}"
+                )
+            },
+        })
+
+        image_parts_gemini.append(
+            types.Part.from_bytes(
+                data=image_bytes,
+                mime_type=content_type,
+            )
+        )
+
+        image_parts_groq.append({
+            "type": "image_url",
+            "image_url": {
+                "url": (
+                    f"data:{content_type};"
+                    f"base64,{base64_image}"
+                )
+            },
+        })
+
+    prompt = f"""
+You are the core AI engine of Note'sUp, an academic study-gap analyzer.
+
+Your task is to analyze FACULTY MATERIAL and STUDENT HANDWRITTEN NOTES together
+and return the COMPLETE FINAL RESULT in one JSON response.
+
+IMPORTANT SOURCE RULES
+1. The faculty material is the PRIMARY reference.
+2. Student notes are evidence of what the student has actually demonstrated.
+3. Do not invent faculty-specific definitions, formulas, examples, page numbers,
+   slide numbers, or claims.
+4. If information is not supported by the faculty material, do not present it
+   as faculty material.
+5. Do not assume the student knows a concept merely because its name appears.
+6. Preserve equations and variable names as accurately as possible.
+
+STEP 1 — FACULTY KNOWLEDGE MAP
+Extract the important academic topics from the faculty material.
+For each topic provide:
+- topic
+- description
+- importance
+- page_reference when explicitly available
+
+STEP 2 — STUDENT KNOWLEDGE MAP
+Inspect ALL handwritten images.
+Determine what the student actually demonstrates.
+For each topic provide:
+- topic
+- covered_concepts
+- formulas
+- examples
+- confidence
+Do not add knowledge that is not visible in the student's notes.
+
+STEP 3 — GAP ANALYSIS
+Compare the faculty material with the student's demonstrated knowledge.
+
+Every important faculty topic must receive exactly one status:
+- MISSING
+- PARTIAL
+- MASTERED
+
+MISSING:
+The student has not demonstrated sufficient knowledge of the topic.
+
+PARTIAL:
+The student demonstrates some of the topic, but important faculty-supported
+content is missing.
+
+MASTERED:
+The student's notes demonstrate sufficient coverage of the faculty material
+for that topic.
+
+For every analyzed topic provide:
+- topic
+- status
+- summary
+- why_needed
+- student_knowledge
+- missing_information
+
+STEP 4 — GENERATE STUDY NOTES IN THE SAME RESPONSE
+For every MISSING or PARTIAL topic, generate one targeted study-note object.
+
+Rules:
+- Faculty material remains the primary reference.
+- For PARTIAL topics, focus mainly on what is missing.
+- Avoid unnecessarily repeating what the student already knows.
+- Include equations when supported by the faculty material.
+- Define variables used in equations.
+- Include step-by-step procedures when supported.
+- Include examples only when the source material supports them.
+- Do not invent page/slide references.
+- Keep notes exam-oriented and clear.
+
+Return ONLY valid JSON using exactly this top-level structure:
+
+{{
+  "faculty_knowledge_map": [
+    {{
+      "topic": "...",
+      "description": "...",
+      "importance": "...",
+      "page_reference": "..."
+    }}
+  ],
+  "student_knowledge_map": [
+    {{
+      "topic": "...",
+      "covered_concepts": [],
+      "formulas": [],
+      "examples": [],
+      "confidence": "..."
+    }}
+  ],
+  "topics": [
+    {{
+      "topic": "...",
+      "status": "MISSING|PARTIAL|MASTERED",
+      "summary": "...",
+      "why_needed": "...",
+      "student_knowledge": "...",
+      "missing_information": []
+    }}
+  ],
+  "generated_notes": [
+    {{
+      "topic": "...",
+      "status": "MISSING|PARTIAL",
+      "why_needed": "...",
+      "student_knowledge": "...",
+      "missing_information": [],
+      "sections": [
+        {{
+          "heading": "...",
+          "content": "...",
+          "equations": []
+        }}
+      ],
+      "exam_points": [],
+      "sources": []
+    }}
+  ]
+}}
+
+If there are no missing or partial topics, return an empty generated_notes array.
+
+FACULTY MATERIAL
+================
+{faculty_text}
+
+STUDENT HANDWRITTEN NOTES
+=========================
+The attached images are the student's notes. Inspect every image before
+producing the final JSON.
+"""
+
+    system_instruction = (
+        "You are Note'sUp's unified multimodal academic analysis engine. "
+        "Return only valid JSON and ground all academic claims in the supplied "
+        "faculty material and student evidence."
+    )
+
+    # -------------------------------------------------
+    # PRIMARY: OPENROUTER QWEN
+    # -------------------------------------------------
+    if openrouter_client is not None:
+        try:
+            print(
+                "UNIFIED AI REQUEST | provider=OpenRouter | "
+                f"model={OPENROUTER_VISION_MODEL} | "
+                f"images={len(image_files)}"
+            )
+
+            response = openrouter_client.chat.completions.create(
+                model=OPENROUTER_VISION_MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": system_instruction,
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": prompt,
+                            },
+                            *image_parts_openrouter,
+                        ],
+                    },
+                ],
+                temperature=0.1,
+                max_tokens=10000,
+                response_format={"type": "json_object"},
+            )
+
+            content = response.choices[0].message.content
+            if not content:
+                raise ValueError("OpenRouter returned an empty unified response.")
+
+            print("UNIFIED AI SUCCESS | provider=OpenRouter")
+            return parse_json_response(content, "UNIFIED ANALYSIS")
+
+        except Exception as openrouter_error:
+            print(
+                "UNIFIED OPENROUTER ERROR | "
+                f"type={type(openrouter_error).__name__} | "
+                f"error={repr(openrouter_error)}"
+            )
+
+        # -------------------------------------------------
+        # SECOND: OPENROUTER NEMOTRON
+        # -------------------------------------------------
+        try:
+            print(
+                "UNIFIED AI FALLBACK | provider=OpenRouter | "
+                f"model={OPENROUTER_VISION_FALLBACK_MODEL}"
+            )
+
+            response = openrouter_client.chat.completions.create(
+                model=OPENROUTER_VISION_FALLBACK_MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": system_instruction,
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": prompt,
+                            },
+                            *image_parts_openrouter,
+                        ],
+                    },
+                ],
+                temperature=0.1,
+                max_tokens=10000,
+                response_format={"type": "json_object"},
+            )
+
+            content = response.choices[0].message.content
+            if not content:
+                raise ValueError("Nemotron returned an empty unified response.")
+
+            print("UNIFIED AI SUCCESS | provider=Nemotron")
+            return parse_json_response(content, "UNIFIED ANALYSIS")
+
+        except Exception as nemotron_error:
+            print(
+                "UNIFIED NEMOTRON ERROR | "
+                f"type={type(nemotron_error).__name__} | "
+                f"error={repr(nemotron_error)}"
+            )
+
+    # -------------------------------------------------
+    # THIRD: GEMINI
+    # -------------------------------------------------
+    try:
+        print(
+            "UNIFIED AI FALLBACK | provider=Gemini | "
+            f"model={GEMINI_MODEL}"
+        )
+
+        response = gemini_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=[prompt, *image_parts_gemini],
+            config=types.GenerateContentConfig(
+                temperature=0.1,
+                max_output_tokens=10000,
+                system_instruction=system_instruction,
+                response_mime_type="application/json",
+            ),
+        )
+
+        content = response.text
+        if not content:
+            raise ValueError("Gemini returned an empty unified response.")
+
+        print("UNIFIED AI SUCCESS | provider=Gemini")
+        return parse_json_response(content, "UNIFIED ANALYSIS")
+
+    except Exception as gemini_error:
+        print(
+            "UNIFIED GEMINI ERROR | "
+            f"type={type(gemini_error).__name__} | "
+            f"error={repr(gemini_error)}"
+        )
+
+    # -------------------------------------------------
+    # FINAL: GROQ
+    # -------------------------------------------------
+    print(
+        "UNIFIED AI FALLBACK | provider=Groq | "
+        f"model={GROQ_VISION_MODEL}"
+    )
+
+    response = groq_client.chat.completions.create(
+        model=GROQ_VISION_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": system_instruction,
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": prompt,
+                    },
+                    *image_parts_groq,
+                ],
+            },
+        ],
+        temperature=0.1,
+        max_completion_tokens=10000,
+        reasoning_effort="none",
+        response_format={"type": "json_object"},
+        stream=False,
+    )
+
+    content = response.choices[0].message.content
+    if not content:
+        raise ValueError("Groq returned an empty unified response.")
+
+    print("UNIFIED AI SUCCESS | provider=Groq")
+    return parse_json_response(content, "UNIFIED ANALYSIS")
+
+
 async def extract_faculty_topics(faculty_text: str) -> List[Dict[str, Any]]:
     prompt = f"""
 You are analyzing faculty learning material.
