@@ -101,24 +101,19 @@ def replace_sqrt_commands(equation: str) -> str:
 
 def normalize_unicode_math(equation: str) -> str:
     """Convert Unicode math decorations/subscripts into Typst-safe syntax."""
-    # Unicode combining marks such as x̂ can otherwise become invalid identifiers.
-    equation = equation.replace("\u0302", "^").replace("\u0304", "^")
+    equation = re.sub(r"([A-Za-z0-9])\u0302", r"hat(\1)", equation)
+    equation = re.sub(r"([A-Za-z0-9])\u0304", r"overline(\1)", equation)
 
-    # Convert common Unicode subscript characters to ASCII.
     subscript_map = str.maketrans({
-        "₀": "0", "₁": "1", "₂": "2", "₃": "3", "₄": "4",
-        "₅": "5", "₆": "6", "₇": "7", "₈": "8", "₉": "9",
-        "ₐ": "a", "ₑ": "e", "ₕ": "h", "ᵢ": "i", "ⱼ": "j",
-        "ₖ": "k", "ₗ": "l", "ₘ": "m", "ₙ": "n", "ₒ": "o",
-        "ₚ": "p", "ᵣ": "r", "ₛ": "s", "ₜ": "t", "ᵤ": "u",
-        "ᵥ": "v", "ₓ": "x",
+        "₀": "_0", "₁": "_1", "₂": "_2", "₃": "_3", "₄": "_4",
+        "₅": "_5", "₆": "_6", "₇": "_7", "₈": "_8", "₉": "_9",
+        "ₐ": "_a", "ₑ": "_e", "ₕ": "_h", "ᵢ": "_i", "ⱼ": "_j",
+        "ₖ": "_k", "ₗ": "_l", "ₘ": "_m", "ₙ": "_n", "ₒ": "_o",
+        "ₚ": "_p", "ᵣ": "_r", "ₛ": "_s", "ₜ": "_t", "ᵤ": "_u",
+        "ᵥ": "_v", "ₓ": "_x",
     })
-    equation = equation.translate(subscript_map)
+    return equation.translate(subscript_map)
 
-    # x^ becomes hat(x) for the common Unicode-hat representation x̂.
-    equation = re.sub(r"([A-Za-z0-9])\^", r"hat(\1)", equation)
-
-    return equation
 
 
 def equation_to_typst(value: Any) -> str:
@@ -127,6 +122,7 @@ def equation_to_typst(value: Any) -> str:
         return ""
 
     equation = equation.strip().strip("$").strip()
+    equation = normalize_unicode_math(equation)
 
     replacements = {
         "\\left": "",
