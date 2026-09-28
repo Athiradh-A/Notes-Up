@@ -204,6 +204,7 @@ export default function Home() {
   const [generatingId, setGeneratingId] = useState<string | null>(null);
   const [facultyFile, setFacultyFile] = useState<File | null>(null);
   const [studentImages, setStudentImages] = useState<File[]>([]);
+  const [studentPdf, setStudentPdf] = useState<File | null>(null);
 
   useEffect(() => {
   try {
@@ -229,7 +230,16 @@ export default function Home() {
   };
 
   const handleStudentImagesChange = (e: ChangeEvent<HTMLInputElement>) => {
-    setStudentImages(e.target.files ? Array.from(e.target.files) : []);
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    const pdf = files.find(
+      (file) =>
+        file.type === "application/pdf" ||
+        file.name.toLowerCase().endsWith(".pdf")
+    ) || null;
+    const images = files.filter((file) => file !== pdf);
+
+    setStudentImages(images);
+    setStudentPdf(pdf);
   };
 
   const handleAnalyze = async (e: FormEvent<HTMLFormElement>) => {
@@ -240,8 +250,13 @@ export default function Home() {
       return;
     }
 
-    if (studentImages.length === 0) {
-      alert("Please upload at least one handwritten note image.");
+    if (studentImages.length === 0 && !studentPdf) {
+      alert("Please upload handwritten notes as images or a PDF.");
+      return;
+    }
+
+    if (studentImages.length > 0 && studentPdf) {
+      alert("Please upload either handwritten note images or one handwritten-notes PDF, not both.");
       return;
     }
 
@@ -265,7 +280,12 @@ export default function Home() {
 
     const formData = new FormData();
     formData.append("faculty_file", facultyFile);
-    studentImages.forEach((img) => formData.append("student_images", img));
+
+    if (studentPdf) {
+      formData.append("student_pdf", studentPdf);
+    } else {
+      studentImages.forEach((img) => formData.append("student_images", img));
+    }
 
     try {
       const response = await fetch(`${API_URL}/analyze`, {
@@ -618,10 +638,23 @@ export default function Home() {
                 <input
                   type="file"
                   multiple
-                  accept="image/*"
+                  accept="image/*,.pdf"
                   onChange={handleStudentImagesChange}
                   className="text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer"
                 />
+                <p className="mt-3 text-[11px] text-gray-600 text-center">
+                  Upload handwritten images or one handwritten-notes PDF
+                </p>
+                {(studentPdf || studentImages.length > 0) && (
+                  <p className="mt-2 text-[11px] text-blue-400 text-center">
+                    {studentPdf
+                      ? "PDF selected: " + studentPdf.name
+                      : studentImages.length +
+                        " image" +
+                        (studentImages.length === 1 ? "" : "s") +
+                        " selected"}
+                  </p>
+                )}
               </div>
             </div>
 
