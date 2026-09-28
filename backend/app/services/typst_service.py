@@ -47,8 +47,6 @@ def replace_braced_command(equation: str, command: str, function: str) -> str:
 
 
 def replace_fraction_commands(equation: str) -> str:
-    # Typst uses frac(numerator, denominator), while LaTeX uses
-    # \frac{numerator}{denominator}.
     fraction_pattern = r"\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}"
     while re.search(fraction_pattern, equation):
         equation = re.sub(
@@ -73,8 +71,6 @@ def equation_to_typst(value: Any) -> str:
     if not equation:
         return ""
 
-    # Strip common LaTeX delimiters before putting the expression inside
-    # a Typst math block.
     equation = equation.strip().strip("$").strip()
 
     equation = equation.replace("\\left", "").replace("\\right", "")
@@ -119,8 +115,6 @@ def equation_to_typst(value: Any) -> str:
     equation = replace_fraction_commands(equation)
     equation = replace_sqrt_commands(equation)
 
-    # LaTeX text commands contain ordinary words. In Typst math mode,
-    # multi-letter words are interpreted as variable/function names.
     equation = replace_braced_command(equation, "\\textbf", '"')
     equation = replace_braced_command(equation, "\\text", '"')
     equation = replace_braced_command(equation, "\\mathrm", '"')
@@ -210,14 +204,15 @@ def build_study_guide_typst(
                 equations = section.get("equations")
                 if isinstance(equations, list):
                     for equation in equations:
-                        equation_text = equation_to_typst(equation)
+                        equation_text = clean_text(equation)
                         if equation_text:
-                            # Render equations as real Typst math instead of
-                            # plain escaped text. This keeps PDF equations
-                            # visually consistent with the KaTeX web UI.
-                            lines.append("#align(center)[")
-                            lines.append(f"  $ {equation_text} $")
-                            lines.append("]")
+                            # Keep AI-generated equations as escaped text in the PDF.
+                            # Rendering arbitrary generated strings as Typst math can
+                            # cause names such as "variables" to be interpreted as
+                            # unknown Typst identifiers.
+                            lines.append(
+                                f"*Equation:* {escape_typst_text(equation_text)}"
+                            )
                             lines.append("")
 
         exam_points = note.get("exam_points")
