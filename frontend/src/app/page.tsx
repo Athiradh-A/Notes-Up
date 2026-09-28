@@ -28,6 +28,7 @@ interface AnalysisResults {
   missing_topics?: Topic[];
   partially_covered_topics?: Topic[];
   covered_topics?: string[];
+  generated_notes?: GeneratedNote[];
   _faculty_raw?: unknown;
 }
 
@@ -320,19 +321,63 @@ export default function Home() {
     if (!isAll && !topic) return;
 
     try {
+      const cachedNotes = Array.isArray(results?.generated_notes)
+        ? results.generated_notes.filter(
+            (note): note is GeneratedNote =>
+              !!note && typeof note === "object"
+          )
+        : [];
+
+      // The unified /analyze request already generated notes for every
+      // MISSING/PARTIAL topic. Reuse them instead of making another AI call.
+      if (cachedNotes.length > 0) {
+        if (isAll) {
+          setActiveNotes({
+            topic: "All Gaps Study Guide",
+            content: cachedNotes,
+          });
+        } else {
+          const cachedNote = cachedNotes.find(
+            (note) =>
+              String(note.topic || "").trim().toLowerCase() ===
+              String(topic?.topic || "").trim().toLowerCase()
+          );
+
+          if (cachedNote) {
+            setActiveNotes({
+              topic: cachedNote.topic || topic?.topic || "Study Notes",
+              content: cachedNote,
+            });
+          } else {
+            throw new Error(
+              "The generated notes for this topic were not returned by the analysis."
+            );
+          }
+        }
+
+        return;
+      }
+
+      // Backward-compatible fallback for older analysis responses.
       let currentFacultyData = facultyRaw;
 
       if (!currentFacultyData) {
         const savedRaw = localStorage.getItem("ss_faculty_raw");
-        if (savedRaw && savedRaw !== "undefined") currentFacultyData = JSON.parse(savedRaw);
+        if (savedRaw && savedRaw !== "undefined") {
+          currentFacultyData = JSON.parse(savedRaw);
+        }
       }
 
       const missingTopics = Array.isArray(results?.missing_topics)
-        ? results.missing_topics.filter((item) => item && typeof item === "object")
+        ? results.missing_topics.filter(
+            (item) => item && typeof item === "object"
+          )
         : [];
 
       const partialTopics = Array.isArray(results?.partially_covered_topics)
-        ? results.partially_covered_topics.filter((item) => item && typeof item === "object")
+        ? results.partially_covered_topics.filter(
+            (item) => item && typeof item === "object"
+          )
         : [];
 
       const allTopics = [...missingTopics, ...partialTopics];
@@ -349,24 +394,42 @@ export default function Home() {
         body = {
           topic: "All Missing and Partially Covered Topics",
           status: "missing",
-          why_needed: "These topics were identified by the gap analysis as missing or only partially covered in the student's notes.",
-          student_knowledge: allTopics.map((item) => `${item.topic}: ${item.student_knowledge || "Not sufficiently covered"}`).join("\n"),
-          missing_information: allTopics.flatMap((item) => item.missing_information || [item.summary || ""]),
+          why_needed:
+            "These topics were identified by the gap analysis as missing or only partially covered in the student's notes.",
+          student_knowledge: allTopics
+            .map(
+              (item) =>
+                `${item.topic}: ${item.student_knowledge || "Not sufficiently covered"}`
+            )
+            .join("\n"),
+          missing_information: allTopics.map(
+            (item) =>
+              `${item.topic}: ${(item.missing_information || []).join(", ")}`
+          ),
           all_gaps: allTopics,
-          faculty_context: JSON.stringify(results?.faculty_knowledge_map || currentFacultyData || ""),
+          faculty_context: JSON.stringify(
+            results?.faculty_knowledge_map || currentFacultyData || ""
+          ),
         };
       } else {
         body = {
           topic: topic?.topic || "",
-          status: topic?.status || (missingTopics.some((item) => item.topic === topic?.topic) ? "missing" : "partially_covered"),
+          status:
+            topic?.status ||
+            (missingTopics.some((item) => item.topic === topic?.topic)
+              ? "missing"
+              : "partially_covered"),
           why_needed: topic?.why_needed || topic?.summary || "",
           student_knowledge: topic?.student_knowledge || "",
-          missing_information: topic?.missing_information || [topic?.summary || ""],
-          faculty_context: JSON.stringify(results?.faculty_knowledge_map || currentFacultyData || ""),
+          missing_information:
+            topic?.missing_information || [topic?.summary || ""],
+          faculty_context: JSON.stringify(
+            results?.faculty_knowledge_map || currentFacultyData || ""
+          ),
         };
       }
 
-      console.log("GENERATE NOTES REQUEST", {
+      console.log("GENERATE NOTES FALLBACK REQUEST", {
         isAll,
         topic: isAll ? "ALL" : topic?.topic,
         gapCount: allTopics.length,
@@ -381,7 +444,9 @@ export default function Home() {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Server Error (${response.status}): ${errorText}`);
+        throw new Error(
+          `Server Error (${response.status}): ${errorText}`
+        );
       }
 
       const data: GeneratedNote | GeneratedNote[] = await response.json();
@@ -392,11 +457,15 @@ export default function Home() {
       });
     } catch (error) {
       console.error("Generation Error:", error);
-      alert("Failed to generate notes: " + (error instanceof Error ? error.message : "Unknown error"));
+      alert(
+        "Failed to generate notes: " +
+          (error instanceof Error ? error.message : "Unknown error")
+      );
     } finally {
       setGeneratingId(null);
     }
   };
+
 
   const buildDownloadText = (notes: ActiveNotes) => {
     const noteList = Array.isArray(notes.content) ? notes.content : [notes.content];
