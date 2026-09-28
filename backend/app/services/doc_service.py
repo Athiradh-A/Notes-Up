@@ -5,6 +5,7 @@ from pypdf import PdfReader
 from pptx import Presentation
 import fitz
 from fastapi import UploadFile
+from starlette.datastructures import Headers
 from typing import List, Dict
 
 def sanitize_filename(filename: str) -> str:
@@ -29,6 +30,7 @@ async def render_pdf_to_images(file: UploadFile) -> List[UploadFile]:
                 UploadFile(
                     filename=f"{os.path.splitext(file.filename or 'notes')[0]}_page_{index + 1}.png",
                     file=io.BytesIO(png_bytes),
+                    headers=Headers({"content-type": "image/png"}),
                 )
             )
 
