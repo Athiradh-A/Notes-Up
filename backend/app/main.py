@@ -5,6 +5,10 @@ from app.routes.analysis import router as analysis_router
 
 app = FastAPI()
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
