@@ -8,10 +8,7 @@ from app.services.doc_service import extract_text, render_pdf_to_images
 from app.services.typst_service import compile_study_guide_pdf
 
 from app.services.ai_service import (
-    transcribe_images,
-    extract_faculty_topics,
-    extract_student_topics,
-    perform_gap_analysis,
+    analyze_materials_unified,
     generate_study_notes,
     generate_bulk_study_notes,
     chat_with_notes,
@@ -32,11 +29,9 @@ async def analyze_notes(
     student_pdf: UploadFile | None = File(None),
 ):
     try:
-
         # -------------------------------------------------
-        # 1 + 2. PREPARE BOTH INPUTS
+        # 1. PREPARE STUDENT NOTE IMAGES
         # -------------------------------------------------
-
         student_images = student_images or []
 
         if student_pdf is not None:
@@ -49,11 +44,11 @@ async def analyze_notes(
                 detail="Please upload handwritten notes as images or a PDF."
             )
 
-        # These operations are independent, so run them concurrently.
-        faculty_data, transcribed_notes = await asyncio.gather(
-            extract_text(faculty_file),
-            transcribe_images(student_images),
-        )
+        # -------------------------------------------------
+        # 2. EXTRACT FACULTY MATERIAL LOCALLY
+        # -------------------------------------------------
+        # PDF/PPT text extraction does not require an AI request.
+        faculty_data = await extract_text(faculty_file)
 
         if not faculty_data:
             raise HTTPException(
@@ -61,218 +56,157 @@ async def analyze_notes(
                 detail="No readable content found in faculty materials."
             )
 
-        print(
-            f"FACULTY TEXT EXTRACTED | pages={len(faculty_data)}"
-        )
-        print(
-            f"STUDENT NOTES TRANSCRIBED | characters={len(transcribed_notes)}"
-        )
-
         faculty_text = "\n\n".join(
             str(page.get("content", ""))
             for page in faculty_data
         )
 
-        # -------------------------------------------------
-        # 3 + 4. EXTRACT BOTH TOPIC MAPS IN PARALLEL
-        # -------------------------------------------------
-
-        faculty_topics, student_topics = await asyncio.gather(
-            extract_faculty_topics(faculty_text),
-            extract_student_topics(transcribed_notes),
-        )
-
         print(
-            f"FACULTY TOPICS EXTRACTED | count={len(faculty_topics)}"
-        )
-        print(
-            f"STUDENT TOPICS EXTRACTED | count={len(student_topics)}"
+            f"FACULTY TEXT EXTRACTED | pages={len(faculty_data)}"
         )
 
-
         # -------------------------------------------------
-        # 5. PERFORM GAP ANALYSIS
+        # 3. ONE UNIFIED MULTIMODAL AI REQUEST
         # -------------------------------------------------
-
-        result = await perform_gap_analysis(
-            faculty_topics,
-            student_topics
+        # The model receives the faculty text and ALL student
+        # note images together and returns the complete result:
+        # knowledge maps + gap analysis + generated study notes.
+        result = await analyze_materials_unified(
+            faculty_text=faculty_text,
+            image_files=student_images,
         )
 
-        print(
-            "GAP ANALYSIS COMPLETE"
+        if not isinstance(result, dict):
+            raise ValueError(
+                "Unified analysis returned an invalid JSON structure."
+            )
+
+        response_dict = result
+
+        # Keep the raw faculty extraction for the existing
+        # frontend/local-storage contract.
+        response_dict["_faculty_raw"] = faculty_data
+
+        faculty_topics = response_dict.get(
+            "faculty_knowledge_map",
+            []
         )
-
-
-        # -------------------------------------------------
-        # 6. CONVERT RESULT TO DICTIONARY
-        # -------------------------------------------------
-
-        if hasattr(result, "model_dump"):
-
-            response_dict = result.model_dump()
-
-        elif hasattr(result, "dict"):
-
-            response_dict = result.dict()
-
-        elif isinstance(result, dict):
-
-            response_dict = result
-
-        else:
-
-            response_dict = {
-                "result": result
-            }
-
-
-        # -------------------------------------------------
-        # 7. ADD KNOWLEDGE MAPS
-        # -------------------------------------------------
-
-        response_dict[
-            "faculty_knowledge_map"
-        ] = faculty_topics
-
-        response_dict[
-            "student_knowledge_map"
-        ] = student_topics
-
-
-        # -------------------------------------------------
-        # 8. CREATE STANDARD GAP ARRAYS
-        # -------------------------------------------------
-
-        missing_topics = []
-        partially_covered_topics = []
-        covered_topics = []
-
-
-        # The AI response may return topics directly
-        # or inside a "topics" field.
-
+        student_topics = response_dict.get(
+            "student_knowledge_map",
+            []
+        )
         analyzed_topics = response_dict.get(
             "topics",
             []
         )
 
-        # Ensure every gap topic has a faculty-grounded summary.
-        # This lets the frontend show a useful definition even if
-        # the gap-analysis model omits the summary field.
+        if not isinstance(faculty_topics, list):
+            faculty_topics = []
+            response_dict["faculty_knowledge_map"] = faculty_topics
+
+        if not isinstance(student_topics, list):
+            student_topics = []
+            response_dict["student_knowledge_map"] = student_topics
+
+        if not isinstance(analyzed_topics, list):
+            analyzed_topics = []
+            response_dict["topics"] = analyzed_topics
+
+        # -------------------------------------------------
+        # 4. CREATE STANDARD GAP ARRAYS
+        # -------------------------------------------------
+        missing_topics = []
+        partially_covered_topics = []
+        covered_topics = []
+
         faculty_by_topic = {
             str(item.get("topic", "")).strip().lower(): item
             for item in faculty_topics
             if isinstance(item, dict) and item.get("topic")
         }
 
-        if isinstance(analyzed_topics, list):
-            for topic in analyzed_topics:
-                if not isinstance(topic, dict):
-                    continue
+        for topic in analyzed_topics:
+            if not isinstance(topic, dict):
+                continue
 
-                if not str(topic.get("summary", "")).strip():
-                    faculty_item = faculty_by_topic.get(
-                        str(topic.get("topic", "")).strip().lower()
-                    )
-                    if faculty_item:
-                        topic["summary"] = faculty_item.get(
-                            "description",
-                            ""
-                        ) or "This topic is required according to the faculty material."
-
-                if not topic.get("why_needed"):
-                    topic["why_needed"] = topic.get(
-                        "summary",
+            if not str(topic.get("summary", "")).strip():
+                faculty_item = faculty_by_topic.get(
+                    str(topic.get("topic", "")).strip().lower()
+                )
+                if faculty_item:
+                    topic["summary"] = faculty_item.get(
+                        "description",
                         ""
-                    )
+                    ) or "This topic is required according to the faculty material."
 
-            for topic in analyzed_topics:
+            if not topic.get("why_needed"):
+                topic["why_needed"] = topic.get("summary", "")
 
-                if not isinstance(topic, dict):
-                    continue
+            status = (
+                str(topic.get("status", ""))
+                .lower()
+                .replace("_", "")
+                .replace(" ", "")
+            )
 
-                status = str(
-                    topic.get(
-                        "status",
-                        ""
-                    )
-                ).lower().replace(
-                    "_",
-                    ""
-                ).replace(
-                    " ",
-                    ""
+            if status == "missing":
+                missing_topics.append(topic)
+
+            elif status in {
+                "partial",
+                "partiallycovered",
+            }:
+                partially_covered_topics.append(topic)
+
+            elif status in {
+                "mastered",
+                "covered",
+            }:
+                covered_topics.append(
+                    topic.get("topic", "Unknown")
                 )
 
-                if status == "missing":
+        response_dict["missing_topics"] = missing_topics
+        response_dict["partially_covered_topics"] = partially_covered_topics
+        response_dict["covered_topics"] = covered_topics
 
-                    missing_topics.append(
-                        topic
-                    )
+        # Ensure generated_notes is always a list so the frontend
+        # can use it directly without another AI request.
+        generated_notes = response_dict.get(
+            "generated_notes",
+            []
+        )
+        if not isinstance(generated_notes, list):
+            generated_notes = []
 
-                elif status in [
-                    "partial",
-                    "partiallycovered",
-                    "partially_covered"
-                ]:
+        response_dict["generated_notes"] = [
+            note for note in generated_notes
+            if isinstance(note, dict)
+        ]
 
-                    partially_covered_topics.append(
-                        topic
-                    )
-
-                elif status in [
-                    "mastered",
-                    "covered"
-                ]:
-
-                    covered_topics.append(
-                        topic.get("topic", "Unknown")
-                    )
-
-
-        response_dict[
-            "missing_topics"
-        ] = missing_topics
-
-        response_dict[
-            "partially_covered_topics"
-        ] = partially_covered_topics
-
-        response_dict[
-            "covered_topics"
-        ] = covered_topics
-
-
-        # -------------------------------------------------
-        # 9. KEEP RAW FACULTY DATA
-        # -------------------------------------------------
-
-        response_dict[
-            "_faculty_raw"
-        ] = faculty_data
-
+        print(
+            "UNIFIED ANALYSIS COMPLETE | "
+            f"faculty_topics={len(faculty_topics)} | "
+            f"student_topics={len(student_topics)} | "
+            f"gaps={len(missing_topics) + len(partially_covered_topics)} | "
+            f"generated_notes={len(response_dict['generated_notes'])}"
+        )
 
         return response_dict
-
 
     except HTTPException:
         raise
 
-
     except ValueError as ve:
-
         raise HTTPException(
             status_code=400,
             detail=str(ve)
         )
 
-
     except Exception as e:
-
         print(
-            f"Critical Pipeline Error: "
-            f"{str(e)}"
+            f"Critical Unified Pipeline Error: "
+            f"{type(e).__name__}: {str(e)}"
         )
 
         raise HTTPException(
