@@ -288,12 +288,7 @@ export default function Home() {
     }
 
     try {
-      const response = await fetch(`${API_URL}/analyze`, {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
+      // Wake the Render backend before the expensive upload request.\n      setLoadingStatus("Connecting to Study Sanctuary...");\n      try {\n        const healthController = new AbortController();\n        const healthTimeout = window.setTimeout(() => healthController.abort(), 30000);\n\n        await fetch(`${API_URL}/health`, {\n          method: "GET",\n          cache: "no-store",\n          signal: healthController.signal,\n        });\n\n        window.clearTimeout(healthTimeout);\n      } catch (healthError) {\n        console.warn("Backend wake-up check failed; continuing with analysis.", healthError);\n      }\n\n      setLoadingStatus("Analyzing your notes...");\n      const response = await fetch(`${API_URL}/analyze`, {\n        method: "POST",\n        body: formData,\n        cache: "no-store",\n      });\n      if (!response.ok) {
         const errorText = await response.text();
         throw new Error(errorText || `Analysis failed with status ${response.status}`);
       }
