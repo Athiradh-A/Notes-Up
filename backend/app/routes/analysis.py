@@ -3,7 +3,7 @@ import json
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Body, Response
 
-from app.services.doc_service import extract_text
+from app.services.doc_service import extract_text, render_pdf_to_images
 
 from app.services.typst_service import compile_study_guide_pdf
 
@@ -28,7 +28,8 @@ router = APIRouter()
 @router.post("/analyze")
 async def analyze_notes(
     faculty_file: UploadFile = File(...),
-    student_images: list[UploadFile] = File(...)
+    student_images: list[UploadFile] | None = File(None),
+    student_pdf: UploadFile | None = File(None),
 ):
     try:
 
@@ -64,8 +65,20 @@ async def analyze_notes(
 
 
         # -------------------------------------------------
-        # 2. TRANSCRIBE STUDENT HANDWRITTEN NOTES
+        # 2. PREPARE + TRANSCRIBE STUDENT HANDWRITTEN NOTES
         # -------------------------------------------------
+
+        student_images = student_images or []
+
+        if student_pdf is not None:
+            pdf_images = await render_pdf_to_images(student_pdf)
+            student_images.extend(pdf_images)
+
+        if not student_images:
+            raise HTTPException(
+                status_code=400,
+                detail="Please upload handwritten notes as images or a PDF."
+            )
 
         transcribed_notes = await transcribe_images(
             student_images
