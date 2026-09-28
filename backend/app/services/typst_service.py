@@ -1,3 +1,5 @@
+import ast
+import json
 import re
 from pathlib import Path
 from typing import Any, Dict, List
@@ -29,6 +31,35 @@ def escape_typst_text(value: Any) -> str:
     for character in ("#", "$", "*", "_", "[", "]"):
         text = text.replace(character, "\\" + character)
     return text
+
+
+
+def extract_equation(value: Any) -> str:
+    """Extract only the equation from an AI equation object/string."""
+    if isinstance(value, dict):
+        return clean_text(value.get("eq", ""))
+
+    if not isinstance(value, str):
+        return clean_text(value)
+
+    raw = value.strip()
+    for parser in (json.loads, ast.literal_eval):
+        try:
+            parsed = parser(raw)
+            if isinstance(parsed, dict) and "eq" in parsed:
+                return clean_text(parsed["eq"])
+        except (ValueError, SyntaxError, TypeError, json.JSONDecodeError):
+            pass
+
+    match = re.search(
+        r"""['"]eq['"]\s*:\s*['"](.*?)['"]\s*,\s*['"]variables['"]""",
+        raw,
+        flags=re.DOTALL,
+    )
+    if match:
+        return match.group(1).replace("\\\\", "\\").strip()
+
+    return raw
 
 
 def escape_typst_title(value: Any) -> str:
@@ -67,59 +98,103 @@ def replace_sqrt_commands(equation: str) -> str:
 
 
 def equation_to_typst(value: Any) -> str:
-    equation = clean_text(value)
+    equation = extract_equation(value)
     if not equation:
         return ""
 
     equation = equation.strip().strip("$").strip()
 
-    equation = equation.replace("\\left", "").replace("\\right", "")
-    equation = equation.replace("\\cdot", " dot ")
-    equation = equation.replace("\\times", " times ")
-    equation = equation.replace("\\pm", " plus.minus ")
-    equation = equation.replace("\\leq", " <= ")
-    equation = equation.replace("\\le", " <= ")
-    equation = equation.replace("\\geq", " >= ")
-    equation = equation.replace("\\ge", " >= ")
-    equation = equation.replace("\\neq", " != ")
-    equation = equation.replace("\\infty", " infinity ")
-    equation = equation.replace("\\rightarrow", " arrow ")
-    equation = equation.replace("\\to", " arrow ")
-    equation = equation.replace("\\,", " ")
-    equation = equation.replace("\\quad", " ")
-    equation = equation.replace("\\qquad", " ")
+    replacements = {
+        "\\left": "",
+        "\\right": "",
+        "\\,": " ",
+        "\\;": " ",
+        "\\:": " ",
+        "\\!": "",
+        "\\quad": " ",
+        "\\qquad": " ",
+        "\\cdot": " dot ",
+        "\\times": " times ",
+        "\\pm": " plus.minus ",
+        "\\leq": " <= ",
+        "\\le": " <= ",
+        "\\geq": " >= ",
+        "\\ge": " >= ",
+        "\\neq": " != ",
+        "\\infty": " infinity ",
+        "\\rightarrow": " arrow ",
+        "\\to": " arrow ",
+        "\\mid": " | ",
+    }
+    for old, new in replacements.items():
+        equation = equation.replace(old, new)
 
-    for latex, typst_name in {
-        "\\alpha": "alpha",
-        "\\beta": "beta",
-        "\\gamma": "gamma",
-        "\\delta": "delta",
-        "\\epsilon": "epsilon",
-        "\\theta": "theta",
-        "\\lambda": "lambda",
-        "\\mu": "mu",
-        "\\pi": "pi",
-        "\\rho": "rho",
-        "\\sigma": "sigma",
-        "\\tau": "tau",
-        "\\phi": "phi",
-        "\\omega": "omega",
-        "\\Delta": "Delta",
-        "\\Lambda": "Lambda",
-        "\\Sigma": "Sigma",
-        "\\Phi": "Phi",
-        "\\Omega": "Omega",
-    }.items():
+    greek = {
+        "\\alpha": "alpha", "\\beta": "beta", "\\gamma": "gamma",
+        "\\delta": "delta", "\\epsilon": "epsilon", "\\varepsilon": "epsilon",
+        "\\theta": "theta", "\\lambda": "lambda", "\\mu": "mu",
+        "\\pi": "pi", "\\rho": "rho", "\\sigma": "sigma", "\\tau": "tau",
+        "\\phi": "phi", "\\varphi": "phi", "\\omega": "omega",
+        "\\Delta": "Delta", "\\Lambda": "Lambda", "\\Sigma": "Sigma",
+        "\\Phi": "Phi", "\\Omega": "Omega",
+    }
+    for latex, typst_name in greek.items():
         equation = equation.replace(latex, typst_name)
 
-    equation = replace_fraction_commands(equation)
-    equation = replace_sqrt_commands(equation)
+    equation = re.sub(
+        r"\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}",
+        lambda m: f"frac({m.group(1)}, {m.group(2)})",
+        equation,
+    )
+    equation = re.sub(
+        r"\\sqrt\s*\{([^{}]*)\}",
+        lambda m: f"sqrt({m.group(1)})",
+        equation,
+    )
+    equation = re.sub(
+        r"\\hat\s*\{([^{}]*)\}",
+        lambda m: f"hat({m.group(1)})",
+        equation,
+    )
+    equation = re.sub(
+        r"\\bar\s*\{([^{}]*)\}",
+        lambda m: f"overline({m.group(1)})",
+        equation,
+    )
+    equation = re.sub(
+        r"\\mathbf\s*\{([^{}]*)\}",
+        lambda m: f"bold({m.group(1)})",
+        equation,
+    )
+    equation = re.sub(
+        r"\\mathrm\s*\{([^{}]*)\}",
+        lambda m: f"upright({m.group(1)})",
+        equation,
+    )
+    equation = re.sub(
+        r"\\text\s*\{([^{}]*)\}",
+        lambda m: f'"{m.group(1)}"',
+        equation,
+    )
 
-    equation = replace_braced_command(equation, "\\textbf", '"')
-    equation = replace_braced_command(equation, "\\text", '"')
-    equation = replace_braced_command(equation, "\\mathrm", '"')
-    equation = equation.replace("\\mathbf", "")
+    matrix = re.search(
+        r"\\begin\{bmatrix\}(.*?)\\end\{bmatrix\}",
+        equation,
+        flags=re.DOTALL,
+    )
+    if matrix:
+        rows = [row.strip() for row in matrix.group(1).split("\\\\") if row.strip()]
+        rendered_rows = [
+            ", ".join(cell.strip() for cell in row.split("&"))
+            for row in rows
+        ]
+        equation = (
+            equation[:matrix.start()]
+            + "mat(" + "; ".join(rendered_rows) + ")"
+            + equation[matrix.end():]
+        )
 
+    equation = equation.replace("\\\\", " ")
     return equation.strip()
 
 
@@ -145,6 +220,19 @@ def add_bullets(lines: List[str], items: Any) -> None:
 
     if items:
         lines.append("")
+
+
+
+def add_equation(lines: List[str], equation: Any) -> None:
+    equation_text = equation_to_typst(equation)
+    if not equation_text:
+        return
+
+    lines.append("#align(center)[")
+    lines.append("  #set text(size: 12.5pt)")
+    lines.append("  $" + equation_text + "$")
+    lines.append("]")
+    lines.append("")
 
 
 def build_study_guide_typst(
@@ -204,16 +292,7 @@ def build_study_guide_typst(
                 equations = section.get("equations")
                 if isinstance(equations, list):
                     for equation in equations:
-                        equation_text = clean_text(equation)
-                        if equation_text:
-                            # Keep AI-generated equations as escaped text in the PDF.
-                            # Rendering arbitrary generated strings as Typst math can
-                            # cause names such as "variables" to be interpreted as
-                            # unknown Typst identifiers.
-                            lines.append(
-                                f"*Equation:* {escape_typst_text(equation_text)}"
-                            )
-                            lines.append("")
+                        add_equation(lines, equation)
 
         exam_points = note.get("exam_points")
         if isinstance(exam_points, list) and exam_points:
