@@ -34,38 +34,7 @@ async def analyze_notes(
     try:
 
         # -------------------------------------------------
-        # 1. EXTRACT FACULTY MATERIAL
-        # -------------------------------------------------
-
-        faculty_data = await extract_text(
-            faculty_file
-        )
-
-        if not faculty_data:
-
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "No readable content found "
-                    "in faculty materials."
-                )
-            )
-
-        print(
-            f"FACULTY TEXT EXTRACTED | "
-            f"pages={len(faculty_data)}"
-        )
-
-
-        # Convert page/slide objects into one text string
-        faculty_text = "\n\n".join(
-            str(page.get("content", ""))
-            for page in faculty_data
-        )
-
-
-        # -------------------------------------------------
-        # 2. PREPARE + TRANSCRIBE STUDENT HANDWRITTEN NOTES
+        # 1 + 2. PREPARE BOTH INPUTS
         # -------------------------------------------------
 
         student_images = student_images or []
@@ -80,41 +49,44 @@ async def analyze_notes(
                 detail="Please upload handwritten notes as images or a PDF."
             )
 
-        transcribed_notes = await transcribe_images(
-            student_images
+        # These operations are independent, so run them concurrently.
+        faculty_data, transcribed_notes = await asyncio.gather(
+            extract_text(faculty_file),
+            transcribe_images(student_images),
+        )
+
+        if not faculty_data:
+            raise HTTPException(
+                status_code=400,
+                detail="No readable content found in faculty materials."
+            )
+
+        print(
+            f"FACULTY TEXT EXTRACTED | pages={len(faculty_data)}"
+        )
+        print(
+            f"STUDENT NOTES TRANSCRIBED | characters={len(transcribed_notes)}"
+        )
+
+        faculty_text = "\n\n".join(
+            str(page.get("content", ""))
+            for page in faculty_data
+        )
+
+        # -------------------------------------------------
+        # 3 + 4. EXTRACT BOTH TOPIC MAPS IN PARALLEL
+        # -------------------------------------------------
+
+        faculty_topics, student_topics = await asyncio.gather(
+            extract_faculty_topics(faculty_text),
+            extract_student_topics(transcribed_notes),
         )
 
         print(
-            f"STUDENT NOTES TRANSCRIBED | "
-            f"characters={len(transcribed_notes)}"
+            f"FACULTY TOPICS EXTRACTED | count={len(faculty_topics)}"
         )
-
-
-        # -------------------------------------------------
-        # 3. EXTRACT FACULTY TOPICS
-        # -------------------------------------------------
-
-        faculty_topics = await extract_faculty_topics(
-            faculty_text
-        )
-
         print(
-            f"FACULTY TOPICS EXTRACTED | "
-            f"count={len(faculty_topics)}"
-        )
-
-
-        # -------------------------------------------------
-        # 4. EXTRACT STUDENT TOPICS
-        # -------------------------------------------------
-
-        student_topics = await extract_student_topics(
-            transcribed_notes
-        )
-
-        print(
-            f"STUDENT TOPICS EXTRACTED | "
-            f"count={len(student_topics)}"
+            f"STUDENT TOPICS EXTRACTED | count={len(student_topics)}"
         )
 
 
