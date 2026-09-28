@@ -243,7 +243,20 @@ def add_bullets(lines: List[str], items: Any) -> None:
 
 
 
-def add_equation(lines: List[str], equation: Any) -> None:
+def add_equation(lines: List[str], equation: Any, safe_text: bool = False) -> None:
+    equation_text = extract_equation(equation)
+    if not equation_text:
+        return
+
+    if safe_text:
+        # Last-resort representation: unsupported LaTeX/Unicode is rendered as text.
+        lines.append("#align(center)[")
+        lines.append("  #set text(size: 11pt)")
+        lines.append("  " + escape_typst_text(equation_text))
+        lines.append("]")
+        lines.append("")
+        return
+
     equation_text = equation_to_typst(equation)
     if not equation_text:
         return
@@ -255,9 +268,11 @@ def add_equation(lines: List[str], equation: Any) -> None:
     lines.append("")
 
 
+
 def build_study_guide_typst(
     notes: Dict[str, Any] | List[Dict[str, Any]],
     title: str,
+    safe_equations: bool = False,
 ) -> str:
     note_list = notes if isinstance(notes, list) else [notes]
     lines: List[str] = []
@@ -312,7 +327,7 @@ def build_study_guide_typst(
                 equations = section.get("equations")
                 if isinstance(equations, list):
                     for equation in equations:
-                        add_equation(lines, equation)
+                        add_equation(lines, equation, safe_text=safe_equations)
 
         exam_points = note.get("exam_points")
         if isinstance(exam_points, list) and exam_points:
@@ -348,18 +363,34 @@ def compile_study_guide_pdf(
     source = build_study_guide_typst(notes, title)
 
     try:
-        pdf_bytes = typst.compile(
-            source.encode("utf-8"),
-            format="pdf",
-        )
+        pdf_bytes = typst.compile(source.encode("utf-8"), format="pdf")
     except Exception as error:
         print(
             f"TYPST PDF ERROR | type={type(error).__name__} | "
             f"error={repr(error)}"
         )
-        raise RuntimeError(
-            f"Typst PDF generation failed: {error}"
-        ) from error
+
+        # Retry once with all equations rendered as escaped text. This keeps
+        # PDF generation reliable even for a future unsupported math format.
+        try:
+            safe_source = build_study_guide_typst(
+                notes,
+                title,
+                safe_equations=True,
+            )
+            pdf_bytes = typst.compile(
+                safe_source.encode("utf-8"),
+                format="pdf",
+            )
+            print("TYPST PDF SAFE FALLBACK SUCCESS | equations_as_text=true")
+        except Exception as fallback_error:
+            print(
+                f"TYPST PDF FALLBACK ERROR | type={type(fallback_error).__name__} | "
+                f"error={repr(fallback_error)}"
+            )
+            raise RuntimeError(
+                f"Typst PDF generation failed: {error}"
+            ) from error
 
     if not pdf_bytes:
         raise RuntimeError("Typst returned an empty PDF.")
