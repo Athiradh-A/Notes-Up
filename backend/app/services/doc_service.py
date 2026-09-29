@@ -21,7 +21,7 @@ async def render_pdf_to_images(file: UploadFile) -> List[UploadFile]:
     try:
         pdf = fitz.open(stream=file_bytes, filetype="pdf")
         rendered_pages = []
-        matrix = fitz.Matrix(2, 2)
+        matrix = fitz.Matrix(1.3, 1.3)
 
         for index, page in enumerate(pdf):
             pixmap = page.get_pixmap(matrix=matrix, alpha=False)
