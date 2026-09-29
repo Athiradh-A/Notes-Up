@@ -518,11 +518,16 @@ export default function Home() {
         apiUrl: API_URL,
       });
 
-      const response = await fetch(`${API_URL}/generate-notes`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+      const response = await postWithNetworkRetry(
+        `${API_URL}/generate-notes`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        ANALYZE_TIMEOUT_MS,
+        3
+      );
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -629,14 +634,19 @@ export default function Home() {
         itemCount: Array.isArray(pdfNotes) ? pdfNotes.length : 1,
       });
 
-      const response = await fetch(`${API_URL}/generate-pdf`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: notes.topic || "AI Study Guide",
-          notes: pdfNotes,
-        }),
-      });
+      const response = await postWithNetworkRetry(
+        `${API_URL}/generate-pdf`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: notes.topic || "AI Study Guide",
+            notes: pdfNotes,
+          }),
+        },
+        5 * 60 * 1000,
+        3
+      );
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -673,14 +683,19 @@ export default function Home() {
     setChatInput("");
 
     try {
-      const response = await fetch(`${API_URL}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          notes: JSON.stringify(results || {}),
-          question,
-        }),
-      });
+      const response = await postWithNetworkRetry(
+        `${API_URL}/chat`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            notes: JSON.stringify(results || {}),
+            question,
+          }),
+        },
+        5 * 60 * 1000,
+        3
+      );
 
       if (!response.ok) {
         const errorText = await response.text();
