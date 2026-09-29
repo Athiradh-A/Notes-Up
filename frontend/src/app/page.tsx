@@ -6,6 +6,74 @@ import KnowledgeOrb from "@/components/KnowledgeOrb";
 import { Upload, Sparkles, Image as ImageIcon, FileText, ArrowLeft, CheckCircle2, AlertCircle, HelpCircle, Send, Loader2, BookOpen, X, Download } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://notes-up.onrender.com";
+const BACKEND_WAKE_TIMEOUT_MS = 90000;
+const ANALYZE_TIMEOUT_MS = 15 * 60 * 1000;
+
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+async function waitForBackend(): Promise<void> {
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      const response = await fetchWithTimeout(
+        `${API_URL}/health`,
+        { method: "GET", cache: "no-store" },
+        BACKEND_WAKE_TIMEOUT_MS
+      );
+
+      if (response.ok) return;
+      lastError = new Error(`Backend health check returned HTTP ${response.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (attempt < 4) {
+      await new Promise((resolve) => window.setTimeout(resolve, 5000));
+    }
+  }
+
+  const detail = lastError instanceof Error ? lastError.message : "Unknown connection error";
+  throw new Error(`The Study Sanctuary backend could not be reached after several attempts. ${detail}`);
+}
+
+async function postWithNetworkRetry(
+  url: string,
+  options: RequestInit,
+  timeoutMs: number,
+  attempts = 3
+): Promise<Response> {
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await fetchWithTimeout(url, options, timeoutMs);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await new Promise((resolve) => window.setTimeout(resolve, 5000));
+      }
+    }
+  }
+
+  if (lastError instanceof Error) {
+    if (lastError.name === "AbortError") {
+      throw new Error("The backend took too long to respond. Please try again.");
+    }
+    throw new Error(`Unable to connect to the backend. ${lastError.message}`);
+  }
+
+  throw new Error("Unable to connect to the backend.");
+}
+
 
 interface Topic {
   topic: string;
@@ -289,7 +357,21 @@ export default function Home() {
     }
 
     try {
-      // Wake the Render backend before the expensive upload request.\n      setLoadingStatus("Connecting to Study Sanctuary...");\n      try {\n        const healthController = new AbortController();\n        const healthTimeout = window.setTimeout(() => healthController.abort(), 30000);\n\n        await fetch(`${API_URL}/health`, {\n          method: "GET",\n          cache: "no-store",\n          signal: healthController.signal,\n        });\n\n        window.clearTimeout(healthTimeout);\n      } catch (healthError) {\n        console.warn("Backend wake-up check failed; continuing with analysis.", healthError);\n      }\n\n      setLoadingStatus("Analyzing your notes...");\n      const response = await fetch(`${API_URL}/analyze`, {\n        method: "POST",\n        body: formData,\n        cache: "no-store",\n      });\n      if (!response.ok) {
+      setLoadingStatus("Waking the Study Sanctuary backend...");
+      await waitForBackend();
+
+      setLoadingStatus("Analyzing your notes...");
+      const response = await postWithNetworkRetry(
+        `${API_URL}/analyze`,
+        {
+          method: "POST",
+          body: formData,
+          cache: "no-store",
+        },
+        ANALYZE_TIMEOUT_MS,
+        3
+      );
+      if (!response.ok) {
         const errorText = await response.text();
         throw new Error(errorText || `Analysis failed with status ${response.status}`);
       }
