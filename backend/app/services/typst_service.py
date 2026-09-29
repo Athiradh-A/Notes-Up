@@ -25,12 +25,67 @@ def clean_text(value: Any) -> str:
     )
 
 
-def escape_typst_text(value: Any) -> str:
+def escape_typst_plain_text(value: Any) -> str:
+    """Escape plain text so it is safe to insert into Typst markup."""
     text = clean_text(value)
     text = text.replace("\\", "\\\\")
     for character in ("#", "$", "*", "_", "[", "]"):
         text = text.replace(character, "\\" + character)
     return text
+
+
+def markdown_to_typst_text(value: Any) -> str:
+    """
+    Convert the small Markdown subset commonly returned by the AI into real
+    Typst inline formatting.
+
+    Markdown:
+      **bold** / __bold__ -> Typst *bold*
+      *italic* / _italic_ -> Typst _italic_
+      ***bold italic*** -> Typst *[bold italic]*
+
+    Everything else is escaped as plain text.
+    """
+    text = clean_text(value)
+    if not text:
+        return ""
+
+    placeholders: list[tuple[str, str]] = []
+
+    def protect(pattern: str, replacement_builder) -> None:
+        nonlocal text
+
+        def repl(match: re.Match[str]) -> str:
+            token = f"__NOTESUP_FMT_{len(placeholders)}__"
+            inner = escape_typst_plain_text(match.group(1))
+            placeholders.append((token, replacement_builder(inner)))
+            return token
+
+        text = re.sub(pattern, repl, text, flags=re.DOTALL)
+
+    # Handle the most specific form first so ***bold italic*** is not
+    # interpreted as separate bold/italic markers.
+    protect(r"\\*\\*\\*(.+?)\\*\\*\\*", lambda inner: f"*[{inner}]")
+    protect(r"\\*\\*(.+?)\\*\\*", lambda inner: f"*{inner}*")
+    protect(r"__(.+?)__", lambda inner: f"*{inner}*")
+    protect(r"(?<!\\*)\\*([^*\\n]+)\\*(?!\\*)", lambda inner: f"_{inner}_")
+    protect(r"(?<!_)_([^_\\n]+)_(?!_)", lambda inner: f"_{inner}_")
+
+    escaped = escape_typst_plain_text(text)
+
+    for token, replacement in placeholders:
+        escaped = escaped.replace(
+            escape_typst_plain_text(token),
+            replacement,
+        )
+
+    return escaped
+
+
+# Keep the old function name as a compatibility wrapper for callers that only
+# need escaped plain text.
+def escape_typst_text(value: Any) -> str:
+    return markdown_to_typst_text(value)
 
 
 
@@ -225,7 +280,7 @@ def add_text_paragraphs(lines: List[str], value: Any) -> None:
 
     paragraphs = [part.strip() for part in text.split("\n\n") if part.strip()]
     for paragraph in paragraphs:
-        lines.append(escape_typst_text(paragraph))
+        lines.append(markdown_to_typst_text(paragraph))
         lines.append("")
 
 
@@ -236,7 +291,7 @@ def add_bullets(lines: List[str], items: Any) -> None:
     for item in items:
         text = clean_text(item)
         if text:
-            lines.append(f"- {escape_typst_text(text)}")
+            lines.append(f"- {markdown_to_typst_text(text)}")
 
     if items:
         lines.append("")
@@ -292,7 +347,7 @@ def build_study_guide_typst(
 
         status = clean_text(note.get("status"))
         if status:
-            lines.append(f"*Status:* {escape_typst_text(status)}")
+            lines.append(f"*Status:* {markdown_to_typst_text(status)}")
             lines.append("")
 
         if note.get("why_needed"):
@@ -344,7 +399,7 @@ def build_study_guide_typst(
             )
             if source_text:
                 lines.append(
-                    f"*Sources:* {escape_typst_text(source_text)}"
+                    f"*Sources:* {markdown_to_typst_text(source_text)}"
                 )
                 lines.append("")
 
