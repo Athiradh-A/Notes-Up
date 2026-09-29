@@ -565,6 +565,255 @@ async def transcribe_images(image_files: List[UploadFile]) -> str:
     return "\n".join(all_transcriptions)
 
 
+
+async def analyze_student_image_batch(
+    image_files: List[UploadFile],
+    batch_number: int = 1,
+) -> List[Dict[str, Any]]:
+    """
+    Analyze a small batch of handwritten pages and extract only the
+    knowledge demonstrated by the student. This intentionally does not
+    perform gap analysis or note generation, keeping each vision request
+    small and fast.
+    """
+    if not image_files:
+        return []
+
+    image_parts_gemini = []
+    image_parts_openrouter = []
+    image_parts_groq = []
+
+    for img_file in image_files:
+        image_bytes = await img_file.read()
+        if not image_bytes:
+            raise ValueError(f"Image file is empty: {img_file.filename}")
+
+        content_type = img_file.content_type or "image/png"
+        image_parts_gemini.append(
+            types.Part.from_bytes(
+                data=image_bytes,
+                mime_type=content_type,
+            )
+        )
+
+        encoded = base64.b64encode(image_bytes).decode("utf-8")
+        image_parts_openrouter.append({
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:{content_type};base64,{encoded}"
+            },
+        })
+        image_parts_groq.append({
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:{content_type};base64,{encoded}"
+            },
+        })
+
+    prompt = f"""
+Analyze handwritten student notes from batch {batch_number}.
+
+Identify ONLY knowledge that is actually demonstrated in the attached pages.
+Do not infer knowledge just because a topic name appears.
+
+For each topic return:
+- topic
+- covered_concepts
+- formulas
+- examples
+- confidence
+- evidence: a short description of what is visibly present
+
+Keep the response concise. Do not perform faculty comparison, gap analysis,
+or study-note generation.
+
+Return ONLY valid JSON:
+
+{{
+  "student_knowledge_map": [
+    {{
+      "topic": "...",
+      "covered_concepts": [],
+      "formulas": [],
+      "examples": [],
+      "confidence": "high|medium|low",
+      "evidence": "..."
+    }}
+  ]
+}}
+
+Inspect every attached page before answering.
+"""
+
+    system_instruction = (
+        "You are Note'sUp's handwritten-note extraction engine. "
+        "Extract only demonstrated student knowledge and return valid JSON."
+    )
+
+    # Gemini is the primary provider for the small batch requests.
+    try:
+        print(
+            f"STUDENT BATCH | batch={batch_number} | "
+            f"provider=Gemini | model={GEMINI_MODEL} | images={len(image_files)}"
+        )
+        response = gemini_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=[prompt, *image_parts_gemini],
+            config=types.GenerateContentConfig(
+                temperature=0.1,
+                max_output_tokens=2500,
+                system_instruction=system_instruction,
+                response_mime_type="application/json",
+            ),
+        )
+        content = response.text
+        if content:
+            result = parse_json_response(content, f"STUDENT BATCH {batch_number}")
+            return normalize_topic_list(
+                result.get("student_knowledge_map", [])
+                if isinstance(result, dict)
+                else result
+            )
+    except Exception as gemini_error:
+        print(
+            f"STUDENT BATCH GEMINI ERROR | batch={batch_number} | "
+            f"type={type(gemini_error).__name__} | error={repr(gemini_error)}"
+        )
+
+    # OpenRouter fallback for a failed Gemini batch.
+    if openrouter_client is not None:
+        for model in (
+            OPENROUTER_VISION_MODEL,
+            OPENROUTER_VISION_FALLBACK_MODEL,
+        ):
+            try:
+                print(
+                    f"STUDENT BATCH FALLBACK | batch={batch_number} | "
+                    f"provider=OpenRouter | model={model}"
+                )
+                response = openrouter_client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_instruction},
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                *image_parts_openrouter,
+                            ],
+                        },
+                    ],
+                    temperature=0.1,
+                    max_tokens=2500,
+                    response_format={"type": "json_object"},
+                )
+                content = response.choices[0].message.content
+                if content:
+                    result = parse_json_response(
+                        content, f"STUDENT BATCH {batch_number}"
+                    )
+                    return normalize_topic_list(
+                        result.get("student_knowledge_map", [])
+                        if isinstance(result, dict)
+                        else result
+                    )
+            except Exception as openrouter_error:
+                print(
+                    f"STUDENT BATCH OPENROUTER ERROR | batch={batch_number} | "
+                    f"model={model} | error={repr(openrouter_error)}"
+                )
+
+    # Final compact Groq fallback. Keep output below the known low quota.
+    try:
+        print(
+            f"STUDENT BATCH FALLBACK | batch={batch_number} | "
+            f"provider=Groq | model={GROQ_VISION_MODEL}"
+        )
+        response = groq_client.chat.completions.create(
+            model=GROQ_VISION_MODEL,
+            messages=[
+                {"role": "system", "content": system_instruction},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        *image_parts_groq,
+                    ],
+                },
+            ],
+            temperature=0.1,
+            max_completion_tokens=900,
+            reasoning_effort="none",
+            response_format={"type": "json_object"},
+            stream=False,
+        )
+        content = response.choices[0].message.content
+        if content:
+            result = parse_json_response(
+                content, f"STUDENT BATCH {batch_number}"
+            )
+            return normalize_topic_list(
+                result.get("student_knowledge_map", [])
+                if isinstance(result, dict)
+                else result
+            )
+    except Exception as groq_error:
+        print(
+            f"STUDENT BATCH GROQ ERROR | batch={batch_number} | "
+            f"error={repr(groq_error)}"
+        )
+
+    raise RuntimeError(
+        f"All vision providers failed for student batch {batch_number}."
+    )
+
+
+async def analyze_student_batches(
+    image_files: List[UploadFile],
+    batch_size: int = 6,
+    max_concurrency: int = 3,
+) -> List[Dict[str, Any]]:
+    """
+    Split handwritten pages into small batches and analyze up to
+    max_concurrency batches at a time.
+    """
+    batches = [
+        image_files[i:i + batch_size]
+        for i in range(0, len(image_files), batch_size)
+    ]
+
+    print(
+        f"STUDENT BATCHING | pages={len(image_files)} | "
+        f"batch_size={batch_size} | batches={len(batches)} | "
+        f"concurrency={max_concurrency}"
+    )
+
+    results = []
+
+    for start in range(0, len(batches), max_concurrency):
+        window = batches[start:start + max_concurrency]
+        window_numbers = list(
+            range(start + 1, start + len(window) + 1)
+        )
+
+        window_results = await asyncio.gather(
+            *[
+                analyze_student_image_batch(batch, number)
+                for batch, number in zip(window, window_numbers)
+            ],
+            return_exceptions=True,
+        )
+
+        for number, result in zip(window_numbers, window_results):
+            if isinstance(result, Exception):
+                raise RuntimeError(
+                    f"Student batch {number} failed: {result}"
+                )
+            results.extend(result)
+
+    return results
+
+
 async def analyze_materials_unified(
     faculty_text: str,
     image_files: List[UploadFile],
