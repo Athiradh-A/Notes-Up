@@ -65,11 +65,11 @@ def markdown_to_typst_text(value: Any) -> str:
 
     # Handle the most specific form first so ***bold italic*** is not
     # interpreted as separate bold/italic markers.
-    protect(r"\\*\\*\\*(.+?)\\*\\*\\*", lambda inner: f"*[{inner}]")
-    protect(r"\\*\\*(.+?)\\*\\*", lambda inner: f"*{inner}*")
+    protect(r"\*\*\*(.+?)\*\*\*", lambda inner: f"*_{inner}_*")
+    protect(r"\*\*(.+?)\*\*", lambda inner: f"*{inner}*")
     protect(r"__(.+?)__", lambda inner: f"*{inner}*")
-    protect(r"(?<!\\*)\\*([^*\\n]+)\\*(?!\\*)", lambda inner: f"_{inner}_")
-    protect(r"(?<!_)_([^_\\n]+)_(?!_)", lambda inner: f"_{inner}_")
+    protect(r"(?<!\*)\*([^*\n]+)\*(?!\*)", lambda inner: f"_{inner}_")
+    protect(r"(?<!_)_([^_\n]+)_(?!_)", lambda inner: f"_{inner}_")
 
     escaped = escape_typst_plain_text(text)
 
