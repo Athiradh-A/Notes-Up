@@ -1,6 +1,6 @@
 #set page(
   paper: "a4",
-  margin: (top: 24mm, bottom: 22mm, left: 22mm, right: 22mm),
+  margin: (top: 20mm, bottom: 18mm, left: 20mm, right: 20mm),
   header: [
     #set text(size: 8.5pt, fill: luma(105))
     #align(right)[Note'sUp — AI Study Guide]
@@ -12,33 +12,35 @@
 )
 
 #set text(
-  font: ("Aptos", "Arial", "Liberation Sans", "Noto Sans"),
-  size: 10.5pt,
+  font: ("Times New Roman", "Liberation Serif", "STIX Two Text", "Noto Serif"),
+  size: 10pt,
   lang: "en",
 )
 
 #set par(
-  justify: false,
-  leading: 0.72em,
-  spacing: 0.8em,
+  justify: true,
+  leading: 0.78em,
+  spacing: 0.55em,
 )
 
 #show heading.where(level: 1): it => {
-  set text(size: 19pt, weight: "bold")
-  block(above: 1.2em, below: 0.7em)[#it.body]
+  set text(size: 17pt, weight: "bold")
+  block(above: 0.8em, below: 0.5em)[#it.body]
 }
 
 #show heading.where(level: 2): it => {
-  set text(size: 14pt, weight: "bold")
-  block(above: 1em, below: 0.45em)[#it.body]
+  set text(size: 12pt, weight: "bold")
+  block(above: 0.75em, below: 0.3em)[#it.body]
 }
 
 #show heading.where(level: 3): it => {
-  set text(size: 11.5pt, weight: "bold")
-  block(above: 0.8em, below: 0.3em)[#it.body]
+  set text(size: 10pt, weight: "bold")
+  block(above: 0.55em, below: 0.2em)[#it.body]
 }
 
 #show list: set list(marker: "•")
+#show math.equation: set text(size: 10pt)
+#show math.equation: set block(spacing: 0.35em)
 #show enum: set enum(numbering: "1.")
 
 {{CONTENT}}
