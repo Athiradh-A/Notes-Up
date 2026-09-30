@@ -1408,7 +1408,7 @@ Student notes:
     return topics
 
 
-async def _find_topic_analysis(value: Any, depth: int = 0) -> Any:
+def _find_topic_analysis(value: Any, depth: int = 0) -> Any:
     """Find a topic-analysis list anywhere in a small AI JSON response.
 
     Providers may wrap the requested ``topics`` array in different objects.
