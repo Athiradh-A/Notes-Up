@@ -10,4 +10,5 @@ python-pptx
 Pillow
 typst>=0.15,<0.16
 PyMuPDF
-reportlab\nmatplotlib\n
+reportlab
+matplotlib
