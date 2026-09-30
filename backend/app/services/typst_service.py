@@ -309,11 +309,43 @@ def equation_to_typst(value: Any) -> str:
     return equation.strip()
 
 
+def strip_inline_equations(text: str) -> str:
+    """Remove equation duplicates from prose; equations are rendered from the
+    dedicated equations array immediately after the section content."""
+    text = re.sub(r"\\\((.+?)\\\)", "", text)
+    text = re.sub(r"\\\[(.+?)\\\]", "", text)
+    text = re.sub(r"\$(.+?)\$", "", text)
+
+    # Remove common bare LaTeX equation fragments that AI sometimes places
+    # directly inside prose even though the same equation is in equations[].
+    math_start = r"(?:\\(?:hat|bar|tilde|mathbf|mathrm|frac|sqrt)\s*\{|[A-Za-z][A-Za-z0-9]*_\{)"
+    bare_equation = re.compile(
+        math_start + r".{0,260}?(?:=|\\sim|\\in|\\leq|\\geq).{0,220}?(?=,|:|;|\.|$)"
+    )
+    text = bare_equation.sub("", text)
+
+    cleaned_lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if (
+            stripped
+            and ("=" in stripped or "\\" in stripped)
+            and sum(stripped.count(ch) for ch in "{}_^\\") >= 3
+        ):
+            words = re.findall(r"[A-Za-z]{2,}", stripped)
+            if len(words) <= 3:
+                continue
+        cleaned_lines.append(line)
+
+    return "\n".join(cleaned_lines)
+
+
 def add_text_paragraphs(lines: List[str], value: Any) -> None:
     text = clean_text(value)
     if not text:
         return
 
+    text = strip_inline_equations(text)
     paragraphs = [part.strip() for part in text.split("\n\n") if part.strip()]
     for paragraph in paragraphs:
         lines.append(markdown_to_typst_text(paragraph))
