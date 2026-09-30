@@ -967,20 +967,25 @@ export default function Home() {
 
             <div className="space-y-8">
               <div className="space-y-4">
-                <div className="flex items-center justify-between gap-4">
-                  <h3 className="text-sm uppercase tracking-widest text-red-500 font-semibold flex items-center gap-2">
-                    <AlertCircle size={16} />
-                    Missing Topics
-                  </h3>
-                  {(results.missing_topics?.length || 0) + (results.partially_covered_topics?.length || 0) > 0 && (
+                <div className="flex items-center justify-between gap-4 flex-wrap">
+                  <div>
+                    <h3 className="text-sm uppercase tracking-widest text-red-500 font-semibold flex items-center gap-2">
+                      <AlertCircle size={16} />
+                      Missing Topics
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Generate one complete study guide from all missing and partially covered topics.
+                    </p>
+                  </div>
+                  {((results.missing_topics?.length ?? 0) > 0 || (results.partially_covered_topics?.length ?? 0) > 0) && (
                     <button
                       type="button"
                       onClick={() => void generateNotes(undefined, true)}
                       disabled={generatingId === "all"}
-                      className="px-4 py-2 bg-white text-black rounded-lg text-xs font-bold hover:bg-gray-200 transition-all flex items-center gap-2 shadow-lg disabled:opacity-50"
+                      className="shrink-0 px-5 py-2.5 bg-white text-black rounded-lg text-xs font-bold hover:bg-gray-200 transition-all flex items-center gap-2 shadow-lg disabled:opacity-50"
                     >
-                      {generatingId === "all" ? <Loader2 className="animate-spin" size={13} /> : <Sparkles size={13} />}
-                      GENERATE ALL NOTES
+                      {generatingId === "all" ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
+                      {generatingId === "all" ? "GENERATING ALL NOTES..." : "GENERATE ALL NOTES"}
                     </button>
                   )}
                 </div>
