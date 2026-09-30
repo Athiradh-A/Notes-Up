@@ -1408,6 +1408,50 @@ Student notes:
     return topics
 
 
+async def _find_topic_analysis(value: Any, depth: int = 0) -> Any:
+    """Find a topic-analysis list anywhere in a small AI JSON response.
+
+    Providers may wrap the requested ``topics`` array in different objects.
+    Search recursively, but keep the search bounded so arbitrary JSON cannot
+    accidentally be treated as a valid analysis response.
+    """
+    if depth > 6:
+        return None
+
+    if isinstance(value, list):
+        valid_items = [
+            item for item in value
+            if isinstance(item, dict)
+            and str(item.get("topic", "")).strip()
+        ]
+        return valid_items or None
+
+    if not isinstance(value, dict):
+        return None
+
+    preferred_keys = (
+        "topics", "gap_analysis", "topic_analysis", "topic_analyses",
+        "analysis", "results", "gaps",
+    )
+
+    for key in preferred_keys:
+        if key not in value:
+            continue
+        candidate = _find_topic_analysis(value[key], depth + 1)
+        if candidate:
+            return candidate
+
+    for key, nested_value in value.items():
+        if key in preferred_keys:
+            continue
+        if isinstance(nested_value, (dict, list)):
+            candidate = _find_topic_analysis(nested_value, depth + 1)
+            if candidate:
+                return candidate
+
+    return None
+
+
 async def perform_gap_analysis(
     faculty_topics: List[Dict[str, Any]],
     student_topics: List[Dict[str, Any]],
@@ -1468,84 +1512,32 @@ STUDENT TOPICS:
 
     result = parse_json_response(content, "GAP ANALYSIS")
 
+    print(
+        "GAP ANALYSIS RAW SHAPE | "
+        f"type={type(result).__name__} | "
+        f"keys={list(result.keys()) if isinstance(result, dict) else 'not-a-dict'}"
+    )
+
     if isinstance(result, list):
-        return {"topics": result}
+        topics = _find_topic_analysis(result)
+        if topics:
+            return {"topics": topics}
+        raise ValueError(
+            "Gap analysis returned a JSON list, but it contained no valid topic analysis."
+        )
 
     if not isinstance(result, dict):
         raise ValueError("Gap analysis returned an invalid JSON structure.")
 
-    topics = result.get("topics")
+    topics = _find_topic_analysis(result)
 
-    # Models can occasionally wrap the topic list inside another object,
-    # even when the prompt asks for a top-level "topics" array. Accept the
-    # common equivalent shapes without treating arbitrary JSON as valid.
-    if not isinstance(topics, list):
-        for key in (
-            "gap_analysis",
-            "analysis",
-            "results",
-            "topic_analysis",
-            "topic_analyses",
-            "gaps",
-        ):
-            candidate = result.get(key)
-
-            if isinstance(candidate, list):
-                topics = candidate
-                break
-
-            if isinstance(candidate, dict):
-                nested = candidate.get("topics")
-                if isinstance(nested, list):
-                    topics = nested
-                    break
-
-                for nested_key in (
-                    "gap_analysis",
-                    "analysis",
-                    "results",
-                    "gaps",
-                ):
-                    nested_candidate = candidate.get(nested_key)
-                    if isinstance(nested_candidate, list):
-                        topics = nested_candidate
-                        break
-
-                if isinstance(topics, list):
-                    break
-
-    if not isinstance(topics, list):
-        # Last safe fallback: look one level deeper for an object whose
-        # "topics" value is a list. We still reject responses with no
-        # recognizable topic analysis rather than silently returning empty data.
-        for value in result.values():
-            if isinstance(value, dict) and isinstance(value.get("topics"), list):
-                topics = value["topics"]
-                break
-
-    if not isinstance(topics, list):
+    if not topics:
         raise ValueError(
             "Gap analysis returned JSON, but no recognized topic analysis list was found."
         )
 
-    if not topics:
-        raise ValueError(
-            "Gap analysis returned an empty topic analysis. "
-            "The analysis was not treated as a successful no-gap result."
-        )
-
-    result["topics"] = [
-        topic for topic in topics
-        if isinstance(topic, dict) and str(topic.get("topic", "")).strip()
-    ]
-
-    if not result["topics"]:
-        raise ValueError(
-            "Gap analysis returned no valid analyzed topics."
-        )
-
+    result["topics"] = topics
     return result
-
 
 async def generate_study_notes(
     topic: str,
