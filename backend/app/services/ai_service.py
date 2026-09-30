@@ -1475,11 +1475,52 @@ STUDENT TOPICS:
         raise ValueError("Gap analysis returned an invalid JSON structure.")
 
     topics = result.get("topics")
+
+    # Models can occasionally wrap the topic list inside another object,
+    # even when the prompt asks for a top-level "topics" array. Accept the
+    # common equivalent shapes without treating arbitrary JSON as valid.
     if not isinstance(topics, list):
-        for key in ("gap_analysis", "analysis", "results"):
+        for key in (
+            "gap_analysis",
+            "analysis",
+            "results",
+            "topic_analysis",
+            "topic_analyses",
+            "gaps",
+        ):
             candidate = result.get(key)
+
             if isinstance(candidate, list):
                 topics = candidate
+                break
+
+            if isinstance(candidate, dict):
+                nested = candidate.get("topics")
+                if isinstance(nested, list):
+                    topics = nested
+                    break
+
+                for nested_key in (
+                    "gap_analysis",
+                    "analysis",
+                    "results",
+                    "gaps",
+                ):
+                    nested_candidate = candidate.get(nested_key)
+                    if isinstance(nested_candidate, list):
+                        topics = nested_candidate
+                        break
+
+                if isinstance(topics, list):
+                    break
+
+    if not isinstance(topics, list):
+        # Last safe fallback: look one level deeper for an object whose
+        # "topics" value is a list. We still reject responses with no
+        # recognizable topic analysis rather than silently returning empty data.
+        for value in result.values():
+            if isinstance(value, dict) and isinstance(value.get("topics"), list):
+                topics = value["topics"]
                 break
 
     if not isinstance(topics, list):
