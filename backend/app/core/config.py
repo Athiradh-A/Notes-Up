@@ -15,6 +15,7 @@ load_dotenv()
 # ---------------------------------------------------------
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_KEY_2 = os.getenv("GEMINI_API_KEY_2")
 
 if not GEMINI_API_KEY:
     raise RuntimeError(
