@@ -15,6 +15,7 @@ from reportlab.platypus import Image as ReportLabImage
 from reportlab.platypus import ListFlowable, ListItem, PageBreak, Paragraph, SimpleDocTemplate, Spacer
 import matplotlib
 matplotlib.use("Agg")
+matplotlib.rcParams["mathtext.fontset"] = "stix"
 from matplotlib.mathtext import math_to_image
 
 
@@ -479,7 +480,6 @@ def compile_study_guide_pdf_reportlab(
                 format="png",
                 dpi=160,
                 color="black",
-                fontset="stix",
             )
             image_buffer.seek(0)
             image = ReportLabImage(image_buffer)
