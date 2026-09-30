@@ -11,7 +11,11 @@ from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
+from reportlab.platypus import Image as ReportLabImage
 from reportlab.platypus import ListFlowable, ListItem, PageBreak, Paragraph, SimpleDocTemplate, Spacer
+import matplotlib
+matplotlib.use("Agg")
+from matplotlib.mathtext import math_to_image
 
 
 TEMPLATE_PATH = (
@@ -451,12 +455,127 @@ def compile_study_guide_pdf_reportlab(
         Spacer(1, 5 * mm),
     ]
 
+    def add_math_image(equation_text: str) -> None:
+        equation_text = clean_text(equation_text)
+        if not equation_text:
+            return
+
+        # Convert common escaped math delimiters into matplotlib mathtext.
+        equation_text = equation_text.strip()
+        equation_text = equation_text.replace(r"\\(", "").replace(r"\\)", "")
+        equation_text = equation_text.replace(r"\\[", "").replace(r"\\]", "")
+        if equation_text.startswith("$") and equation_text.endswith("$"):
+            math_expression = equation_text[1:-1].strip()
+        else:
+            math_expression = equation_text
+
+        # Mathtext uses TeX-style syntax and renders subscripts, superscripts,
+        # fractions, hats, Greek symbols, matrices, and operators cleanly.
+        if not (math_expression.startswith("$") and math_expression.endswith("$")):
+            math_expression = "$" + math_expression + "$"
+
+        image_buffer = BytesIO()
+        try:
+            math_to_image(
+                math_expression,
+                image_buffer,
+                format="png",
+                dpi=220,
+                color="black",
+            )
+            image_buffer.seek(0)
+            image = ReportLabImage(image_buffer)
+            max_width = 155 * mm
+            max_height = 28 * mm
+            scale = min(
+                max_width / image.imageWidth,
+                max_height / image.imageHeight,
+                1.0,
+            )
+            image.drawWidth = image.imageWidth * scale
+            image.drawHeight = image.imageHeight * scale
+            image.hAlign = "CENTER"
+            story.append(image)
+            story.append(Spacer(1, 2 * mm))
+        except Exception as equation_error:
+            print(
+                f"MATH IMAGE ERROR | equation={equation_text!r} | "
+                f"type={type(equation_error).__name__} | error={repr(equation_error)}"
+            )
+            # If mathtext cannot parse a future equation, preserve it as text.
+            story.append(Paragraph(html_escape(equation_text), equation_style))
+
+    def extract_equation_fragments(line: str) -> list[str]:
+        line = clean_text(line)
+        if not line:
+            return []
+
+        fragments = []
+
+        # Explicit math delimiters first.
+        for pattern in (r"\\\((.+?)\\\)", r"\\\[(.+?)\\\]", r"\$(.+?)\$"):
+            fragments.extend(re.findall(pattern, line, flags=re.DOTALL))
+
+        if fragments:
+            return [clean_text(fragment) for fragment in fragments if clean_text(fragment)]
+
+        # Detect equation-like spans in generated prose. This handles common
+        # AI output such as "The dynamics are: x_t = A x_{t-1} + w_t, where ...".
+        if "=" not in line:
+            return []
+
+        candidates = re.findall(
+            r"([A-Za-z\\][A-Za-z0-9_{}\\^|]*\s*=\s*[^.]+?)(?=,\s+where\\b|,\s+and\\b|\.\s+|$)",
+            line,
+        )
+
+        for candidate in candidates:
+            candidate = candidate.strip(" ,")
+            if len(candidate) >= 5 and (
+                "_" in candidate
+                or "\\" in candidate
+                or "^" in candidate
+                or any(op in candidate for op in ("+", "-", "*", "/", "(", ")", "[", "]"))
+            ):
+                fragments.append(candidate)
+
+        return fragments
+
     def add_paragraph(value: Any, style=body_style) -> None:
         text = clean_text(value)
         if not text:
             return
+
         for paragraph in [p.strip() for p in text.split("\n\n") if p.strip()]:
-            story.append(Paragraph(html_escape(paragraph).replace("\n", "<br/>"), style))
+            lines_in_paragraph = [line.strip() for line in paragraph.split("\n") if line.strip()]
+
+            for line in lines_in_paragraph:
+                fragments = extract_equation_fragments(line)
+
+                if fragments:
+                    # Remove the equation fragments from prose so the same
+                    # formula is not printed twice.
+                    remaining = line
+                    for fragment in fragments:
+                        remaining = remaining.replace(fragment, "")
+                    remaining = re.sub(r"\s{2,}", " ", remaining).strip(" :,-")
+
+                    if remaining:
+                        story.append(
+                            Paragraph(
+                                html_escape(remaining),
+                                style,
+                            )
+                        )
+
+                    for fragment in fragments:
+                        add_math_image(fragment)
+                else:
+                    story.append(
+                        Paragraph(
+                            html_escape(line),
+                            style,
+                        )
 
     for index, note in enumerate(note_list, start=1):
         if not isinstance(note, dict):
@@ -506,10 +625,7 @@ def compile_study_guide_pdf_reportlab(
                     for equation in equations:
                         equation_text = extract_equation(equation)
                         if equation_text:
-                            story.append(Paragraph(
-                                html_escape(equation_text).replace("\n", "<br/>"),
-                                equation_style,
-                            ))
+                            add_math_image(equation_text)
 
         exam_points = note.get("exam_points")
         if isinstance(exam_points, list) and exam_points:
