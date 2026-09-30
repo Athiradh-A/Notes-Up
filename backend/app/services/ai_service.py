@@ -1637,6 +1637,7 @@ IMPORTANT RULES:
 13. Keep the notes concise and academic, using a single-column IEEE-inspired style rather than a two-column conference layout.
 14. Use about 3-5 sections when appropriate and avoid repeating the same explanation.
 15. Put only necessary formulas in the equations array and explain their variables in normal text.
+16. Do not repeat full equations inside section content; place each full mathematical expression only in the equations array. In prose, refer to the equation by name and explain its variables.
 16. Keep paragraphs short and exam-focused.
 17. Keep exam_points concise and limited to the most important points.
 
