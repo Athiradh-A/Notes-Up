@@ -374,12 +374,12 @@ export default function Home() {
     }
 
     try {
-      setLoadingStatus("Waking the Study Sanctuary backend...");
-      console.log("BEFORE BACKEND HEALTH CHECK");
-      await waitForBackend();
-      console.log("BACKEND HEALTH PASSED");
-
-      setLoadingStatus("Analyzing your notes...");
+      // Do not block analysis on the /health pre-check.
+      // Browser extensions/privacy blockers can block a harmless GET request
+      // and return ERR_BLOCKED_BY_CLIENT even when /analyze itself is reachable.
+      // The POST below already has timeout + retry handling and can wake Render.
+      setLoadingStatus("Connecting to the Study Sanctuary backend...");
+      console.log("SKIPPING BACKEND HEALTH PRE-CHECK");
       console.log("ABOUT TO POST /analyze");
       const response = await postWithNetworkRetry(
         `${API_URL}/analyze`,
