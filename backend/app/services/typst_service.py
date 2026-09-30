@@ -353,7 +353,7 @@ def build_study_guide_typst(
             continue
 
         topic = clean_text(note.get("topic")) or "Study Topic"
-        lines.append(f"= {index}. {escape_typst_title(topic)}")
+        lines.append(f"== {index}. {escape_typst_title(topic)}")
         lines.append("")
 
         status = clean_text(note.get("status"))
@@ -414,9 +414,6 @@ def build_study_guide_typst(
                 )
                 lines.append("")
 
-        if index < len(note_list):
-            lines.append("#pagebreak()")
-            lines.append("")
 
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     return template.replace("{{CONTENT}}", "\n".join(lines))
@@ -480,13 +477,14 @@ def compile_study_guide_pdf_reportlab(
                 math_expression,
                 image_buffer,
                 format="png",
-                dpi=220,
+                dpi=160,
                 color="black",
+                fontset="stix",
             )
             image_buffer.seek(0)
             image = ReportLabImage(image_buffer)
             max_width = 155 * mm
-            max_height = 28 * mm
+            max_height = 18 * mm
             scale = min(
                 max_width / image.imageWidth,
                 max_height / image.imageHeight,
@@ -645,9 +643,6 @@ def compile_study_guide_pdf_reportlab(
             source_text = " • ".join(clean_text(source) for source in sources if clean_text(source))
             if source_text:
                 story.append(Paragraph(html_escape(f"Sources: {source_text}"), small_style))
-
-        if index < len(note_list):
-            story.append(PageBreak())
 
     doc.build(story)
     pdf_bytes = buffer.getvalue()
