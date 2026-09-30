@@ -52,6 +52,12 @@ GEMINI_MODEL = os.getenv(
     "gemini-3.8-flash",
 )
 
+# Keep older Render environments from forcing the retired Gemini 2.5 model.
+# This lets existing deployments recover without requiring an immediate
+# manual environment-variable change.
+if GEMINI_MODEL == "gemini-2.5-flash":
+    GEMINI_MODEL = "gemini-3.8-flash"
+
 
 # ---------------------------------------------------------
 # GROQ MODELS
