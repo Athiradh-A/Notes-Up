@@ -407,11 +407,22 @@ def build_study_guide_typst(
 
         sources = note.get("sources")
         if isinstance(sources, list) and sources:
-            source_text = " • ".join(
-                clean_text(source)
-                for source in sources
-                if clean_text(source)
-            )
+            source_parts = []
+            for source in sources:
+                if isinstance(source, dict):
+                    source_topic = clean_text(source.get("topic"))
+                    source_description = clean_text(source.get("description"))
+                    if source_topic and source_description:
+                        source_parts.append(f"{source_topic}: {source_description}")
+                    elif source_topic:
+                        source_parts.append(source_topic)
+                    elif source_description:
+                        source_parts.append(source_description)
+                else:
+                    source_value = clean_text(source)
+                    if source_value:
+                        source_parts.append(source_value)
+            source_text = " • ".join(source_parts)
             if source_text:
                 lines.append(
                     f"*Sources:* {markdown_to_typst_text(source_text)}"
