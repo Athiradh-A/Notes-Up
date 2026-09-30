@@ -93,6 +93,14 @@ interface FacultyTopic {
 
 interface AnalysisResults {
   faculty_knowledge_map?: FacultyTopic[];
+  student_knowledge_map?: Array<{
+    topic: string;
+    covered_concepts?: string[];
+    formulas?: string[];
+    examples?: string[];
+    confidence?: string;
+    evidence?: string;
+  }>;
   missing_topics?: Topic[];
   partially_covered_topics?: Topic[];
   covered_topics?: string[];
@@ -878,7 +886,7 @@ export default function Home() {
                           ? "border-yellow-500/50 text-yellow-400 bg-yellow-500/10"
                           : "border-green-500/50 text-green-400 bg-green-500/10"
                       }`}>
-                        {item.importance} Priority
+                        {item.importance || "Unspecified"} Priority
                       </span>
                     </div>
                     <p className="text-gray-400 text-xs leading-relaxed mb-2">
@@ -891,6 +899,35 @@ export default function Home() {
                     <div className="text-[10px] text-gray-600 font-mono">
                       {typeof item.page_reference === "string" ? item.page_reference : ""}
                     </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <h3 className="text-sm uppercase tracking-widest text-blue-400 font-semibold flex items-center gap-2">
+                <BookOpen size={16} />
+                Student Knowledge Map
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {results.student_knowledge_map?.map((item, i) => (
+                  <div key={i} className="glass-card p-4">
+                    <div className="flex justify-between items-start gap-3 mb-2">
+                      <h4 className="font-bold text-white">{item.topic}</h4>
+                      {item.confidence && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full border border-blue-500/30 text-blue-400 bg-blue-500/10">
+                          {item.confidence}
+                        </span>
+                      )}
+                    </div>
+                    {item.covered_concepts?.length ? (
+                      <p className="text-gray-400 text-xs leading-relaxed">
+                        {item.covered_concepts.join(", ")}
+                      </p>
+                    ) : (
+                      <p className="text-gray-600 text-xs italic">No demonstrated concepts recorded.</p>
+                    )}
                   </div>
                 ))}
               </div>
