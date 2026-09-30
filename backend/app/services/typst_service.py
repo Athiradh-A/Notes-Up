@@ -68,7 +68,7 @@ def markdown_to_typst_text(value: Any) -> str:
         nonlocal text
 
         def repl(match: re.Match[str]) -> str:
-            token = f"__NOTESUP_FMT_{len(placeholders)}__"
+            token = f"NOTESUPFMT{len(placeholders)}TOKEN"
             inner = escape_typst_plain_text(match.group(1))
             placeholders.append((token, replacement_builder(inner)))
             return token
