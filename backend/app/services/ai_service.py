@@ -82,14 +82,36 @@ def coerce_text(value: Any) -> str:
 
 
 def normalize_topic_list(data: Any) -> List[Dict[str, Any]]:
+    """Normalize the topic-map shapes returned by all supported providers.
+
+    Never silently turn a recognized-but-malformed response into an empty map.
+    The caller can distinguish a genuine empty list from an unsupported shape.
+    """
     if isinstance(data, list):
         items = data
     elif isinstance(data, dict):
-        items = data.get("topics", [])
-        if not isinstance(items, list):
-            items = data.get("faculty_topics", data.get("student_topics", []))
+        items = None
+        for key in (
+            "topics",
+            "faculty_topics",
+            "student_topics",
+            "faculty_knowledge_map",
+            "student_knowledge_map",
+            "knowledge_map",
+        ):
+            candidate = data.get(key)
+            if isinstance(candidate, list):
+                items = candidate
+                break
+        if items is None:
+            raise ValueError(
+                "AI topic extraction returned JSON, but no recognized topic list was found."
+            )
     else:
-        items = []
+        raise ValueError(
+            "AI topic extraction returned an invalid JSON structure."
+        )
+
     normalized = []
     for item in items:
         if not isinstance(item, dict):
@@ -102,7 +124,10 @@ def normalize_topic_list(data: Any) -> List[Dict[str, Any]]:
         ):
             if key in cleaned:
                 cleaned[key] = coerce_text(cleaned[key])
+        if not str(cleaned.get("topic", "")).strip():
+            continue
         normalized.append(cleaned)
+
     return normalized
 
 
@@ -1211,6 +1236,7 @@ For each topic return:
 - important_concepts
 - formulas
 - exam_relevance
+- importance: High, Medium, or Low
 
 Do NOT invent information.
 Only use information explicitly supported by the faculty material.
@@ -1227,7 +1253,10 @@ Faculty material:
         max_output_tokens=4096,
         temperature=0.1,
     )
-    return normalize_topic_list(parse_json_response(content, "FACULTY TOPICS"))
+    topics = normalize_topic_list(parse_json_response(content, "FACULTY TOPICS"))
+    if not topics:
+        raise ValueError("Faculty topic extraction returned an empty topic map.")
+    return topics
 
 
 async def extract_student_topics(student_text: str) -> List[Dict[str, Any]]:
@@ -1259,7 +1288,10 @@ Student notes:
         max_output_tokens=4096,
         temperature=0.1,
     )
-    return normalize_topic_list(parse_json_response(content, "STUDENT TOPICS"))
+    topics = normalize_topic_list(parse_json_response(content, "STUDENT TOPICS"))
+    if not topics:
+        raise ValueError("Student topic extraction returned an empty topic map.")
+    return topics
 
 
 async def perform_gap_analysis(
@@ -1327,8 +1359,34 @@ STUDENT TOPICS:
     if not isinstance(result, dict):
         raise ValueError("Gap analysis returned an invalid JSON structure.")
 
-    if not isinstance(result.get("topics"), list):
-        result["topics"] = []
+    topics = result.get("topics")
+    if not isinstance(topics, list):
+        for key in ("gap_analysis", "analysis", "results"):
+            candidate = result.get(key)
+            if isinstance(candidate, list):
+                topics = candidate
+                break
+
+    if not isinstance(topics, list):
+        raise ValueError(
+            "Gap analysis returned JSON, but no recognized topic analysis list was found."
+        )
+
+    if not topics:
+        raise ValueError(
+            "Gap analysis returned an empty topic analysis. "
+            "The analysis was not treated as a successful no-gap result."
+        )
+
+    result["topics"] = [
+        topic for topic in topics
+        if isinstance(topic, dict) and str(topic.get("topic", "")).strip()
+    ]
+
+    if not result["topics"]:
+        raise ValueError(
+            "Gap analysis returned no valid analyzed topics."
+        )
 
     return result
 
