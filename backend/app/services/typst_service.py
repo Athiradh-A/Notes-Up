@@ -86,10 +86,13 @@ def markdown_to_typst_text(value: Any) -> str:
     escaped = escape_typst_plain_text(text)
 
     for token, replacement in placeholders:
-        escaped = escaped.replace(
-            escape_typst_plain_text(token),
-            replacement,
-        )
+        # Placeholder tokens contain underscores, which are escaped by
+        # escape_typst_plain_text(). Search for the exact escaped token.
+        escaped_token = escape_typst_plain_text(token)
+        escaped = escaped.replace(escaped_token, replacement)
+
+        # Safety net: never allow an internal formatting token to reach the PDF.
+        escaped = escaped.replace(token, replacement)
 
     return escaped
 
