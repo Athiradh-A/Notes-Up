@@ -12,6 +12,7 @@ from openai import OpenAI
 
 from app.core.config import (
     GEMINI_API_KEY,
+    GEMINI_API_KEY_2,
     GEMINI_MODEL,
     GROQ_API_KEY,
     GROQ_VISION_MODEL,
@@ -22,7 +23,15 @@ from app.core.config import (
     OPENROUTER_TEXT_MODEL,
 )
 
-gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+gemini_clients = [
+    ("primary", genai.Client(api_key=GEMINI_API_KEY)),
+]
+
+if GEMINI_API_KEY_2:
+    gemini_clients.append(
+        ("notesup2", genai.Client(api_key=GEMINI_API_KEY_2))
+    )
+
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 openrouter_client = (
@@ -245,16 +254,36 @@ def generate_gemini(
         system_instruction=system_instruction or None,
         response_mime_type="application/json" if json_mode else None,
     )
-    response = gemini_client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt,
-        config=config,
-    )
-    content = response.text
-    if not content:
-        raise ValueError("Gemini returned an empty response.")
-    print("GEMINI SUCCESS | task=TEXT")
-    return content
+    last_error = None
+
+    for key_name, client in gemini_clients:
+        try:
+            print(
+                f"GEMINI KEY ATTEMPT | task=TEXT | key={key_name} | "
+                f"model={GEMINI_MODEL}"
+            )
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+                config=config,
+            )
+            content = response.text
+            if not content:
+                raise ValueError("Gemini returned an empty response.")
+
+            print(
+                f"GEMINI SUCCESS | task=TEXT | key={key_name}"
+            )
+            return content
+
+        except Exception as error:
+            last_error = error
+            print(
+                f"GEMINI KEY ERROR | task=TEXT | key={key_name} | "
+                f"type={type(error).__name__} | error={repr(error)}"
+            )
+
+    raise last_error or RuntimeError("All configured Gemini keys failed.")
 
 
 def generate_openrouter(
@@ -562,34 +591,52 @@ async def transcribe_images(image_files: List[UploadFile]) -> str:
                         f"attempt={attempt}/2"
                     )
 
-                    response = gemini_client.models.generate_content(
-                        model=GEMINI_MODEL,
-                        contents=[
-                            transcription_prompt,
-                            types.Part.from_bytes(
-                                data=image_bytes,
-                                mime_type=content_type,
-                            ),
-                        ],
-                        config=types.GenerateContentConfig(
-                            temperature=0.2,
-                            max_output_tokens=1200,
-                        ),
-                    )
+                    for key_name, client in gemini_clients:
+                        try:
+                            print(
+                                f"GEMINI VISION KEY ATTEMPT | "
+                                f"file={img_file.filename} | key={key_name}"
+                            )
 
-                    transcription = response.text
+                            response = client.models.generate_content(
+                                model=GEMINI_MODEL,
+                                contents=[
+                                    transcription_prompt,
+                                    types.Part.from_bytes(
+                                        data=image_bytes,
+                                        mime_type=content_type,
+                                    ),
+                                ],
+                                config=types.GenerateContentConfig(
+                                    temperature=0.2,
+                                    max_output_tokens=1200,
+                                ),
+                            )
 
-                    if not transcription:
-                        raise ValueError(
-                            "Gemini returned an empty transcription."
-                        )
+                            transcription = response.text
 
-                    print(
-                        f"VISION SUCCESS | file={img_file.filename} | "
-                        "provider=Gemini"
-                    )
-                    gemini_succeeded = True
-                    break
+                            if not transcription:
+                                raise ValueError(
+                                    "Gemini returned an empty transcription."
+                                )
+
+                            print(
+                                f"VISION SUCCESS | file={img_file.filename} | "
+                                f"provider=Gemini | key={key_name}"
+                            )
+                            gemini_succeeded = True
+                            break
+
+                        except Exception as key_error:
+                            print(
+                                f"GEMINI VISION KEY ERROR | "
+                                f"file={img_file.filename} | key={key_name} | "
+                                f"type={type(key_error).__name__} | "
+                                f"error={repr(key_error)}"
+                            )
+
+                    if gemini_succeeded:
+                        break
 
                 except Exception as gemini_error:
                     print(
@@ -1262,36 +1309,40 @@ producing the final JSON.
     # -------------------------------------------------
     # THIRD: GEMINI
     # -------------------------------------------------
-    try:
-        print(
-            "UNIFIED AI FALLBACK | provider=Gemini | "
-            f"model={GEMINI_MODEL}"
-        )
+    for key_name, client in gemini_clients:
+        try:
+            print(
+                "UNIFIED AI FALLBACK | provider=Gemini | "
+                f"key={key_name} | model={GEMINI_MODEL}"
+            )
 
-        response = gemini_client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=[prompt, *image_parts_gemini],
-            config=types.GenerateContentConfig(
-                temperature=0.1,
-                max_output_tokens=10000,
-                system_instruction=system_instruction,
-                response_mime_type="application/json",
-            ),
-        )
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=[prompt, *image_parts_gemini],
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                    max_output_tokens=10000,
+                    system_instruction=system_instruction,
+                    response_mime_type="application/json",
+                ),
+            )
 
-        content = response.text
-        if not content:
-            raise ValueError("Gemini returned an empty unified response.")
+            content = response.text
+            if not content:
+                raise ValueError("Gemini returned an empty unified response.")
 
-        print("UNIFIED AI SUCCESS | provider=Gemini")
-        return parse_json_response(content, "UNIFIED ANALYSIS")
+            print(
+                f"UNIFIED AI SUCCESS | provider=Gemini | key={key_name}"
+            )
+            return parse_json_response(content, "UNIFIED ANALYSIS")
 
-    except Exception as gemini_error:
-        print(
-            "UNIFIED GEMINI ERROR | "
-            f"type={type(gemini_error).__name__} | "
-            f"error={repr(gemini_error)}"
-        )
+        except Exception as gemini_error:
+            print(
+                "UNIFIED GEMINI KEY ERROR | "
+                f"key={key_name} | "
+                f"type={type(gemini_error).__name__} | "
+                f"error={repr(gemini_error)}"
+            )
 
     # -------------------------------------------------
     # FINAL: GROQ
