@@ -1703,6 +1703,11 @@ IMPORTANT RULES:
 8. Define every variable used in an equation.
 9. Include step-by-step procedures when appropriate.
 10. Include a small example when the source material supports it.
+11. Keep the notes concise and academic, using a single-column IEEE-inspired style rather than a two-column conference layout.
+12. Use about 3-5 sections per topic when appropriate; avoid repeating the same explanation.
+13. Put only necessary formulas in the equations array and explain their variables in normal text.
+14. Keep paragraphs short and exam-focused.
+15. Keep exam_points concise and limited to the most important points.
 
 Return ONLY valid JSON in exactly this structure:
 
