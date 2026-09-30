@@ -576,6 +576,7 @@ def compile_study_guide_pdf_reportlab(
                             html_escape(line),
                             style,
                         )
+                    )
 
     for index, note in enumerate(note_list, start=1):
         if not isinstance(note, dict):
