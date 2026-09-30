@@ -243,21 +243,11 @@ async def analyze_notes(
             "covered_topics"
         ] = covered_topics
 
-        # Generate the same study notes that the current frontend expects,
-        # while keeping the proven pre-batching analysis architecture.
-        gap_topics = missing_topics + partially_covered_topics
-        generated_notes = []
-
-        if gap_topics:
-            generated_notes = await generate_bulk_study_notes(
-                gap_topics,
-                faculty_text,
-            )
-
-        response_dict["generated_notes"] = [
-            note for note in generated_notes
-            if isinstance(note, dict)
-        ]
+        # Study-note generation is intentionally deferred until the user
+        # presses "GENERATE ALL NOTES" (or an individual "GENERATE NOTES"
+        # button). This keeps analysis fast and avoids generating a large
+        # study guide that the user may not want yet.
+        response_dict["generated_notes"] = []
 
 
         # -------------------------------------------------
@@ -273,7 +263,7 @@ async def analyze_notes(
             f"faculty_topics={len(faculty_topics)} | "
             f"student_topics={len(student_topics)} | "
             f"gaps={len(missing_topics) + len(partially_covered_topics)} | "
-            f"generated_notes={len(response_dict['generated_notes'])}"
+            "generated_notes=0 (generated on demand)"
         )
 
         return response_dict
