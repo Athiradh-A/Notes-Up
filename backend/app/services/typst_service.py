@@ -29,7 +29,7 @@ def escape_typst_plain_text(value: Any) -> str:
     """Escape plain text so it is safe to insert into Typst markup."""
     text = clean_text(value)
     text = text.replace("\\", "\\\\")
-    for character in ("#", "$", "*", "_", "[", "]"):
+    for character in ("#", "$", "*", "_", "[", "]", "{", "}"):
         text = text.replace(character, "\\" + character)
     return text
 
