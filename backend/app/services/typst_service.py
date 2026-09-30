@@ -11,12 +11,33 @@ from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Image as ReportLabImage
 from reportlab.platypus import ListFlowable, ListItem, PageBreak, Paragraph, SimpleDocTemplate, Spacer
 import matplotlib
 matplotlib.use("Agg")
 matplotlib.rcParams["mathtext.fontset"] = "stix"
+from matplotlib import font_manager
 from matplotlib.mathtext import math_to_image
+
+# ReportLab's built-in Helvetica/Courier fonts do not cover the full
+# Unicode range used by generated study notes. Embed Matplotlib's
+# Unicode-capable DejaVu fonts so symbols such as ∈, ∑, ∏, ∼ and
+# Unicode subscripts do not become missing-glyph boxes in the PDF.
+_NOTE_FONT = font_manager.findfont(
+    font_manager.FontProperties(family="DejaVu Sans", weight="normal")
+)
+_NOTE_BOLD_FONT = font_manager.findfont(
+    font_manager.FontProperties(family="DejaVu Sans", weight="bold")
+)
+_NOTE_MONO_FONT = font_manager.findfont(
+    font_manager.FontProperties(family="DejaVu Sans Mono", weight="normal")
+)
+
+pdfmetrics.registerFont(TTFont("NoteSans", _NOTE_FONT))
+pdfmetrics.registerFont(TTFont("NoteSans-Bold", _NOTE_BOLD_FONT))
+pdfmetrics.registerFont(TTFont("NoteMono", _NOTE_MONO_FONT))
 
 
 TEMPLATE_PATH = (
@@ -454,12 +475,58 @@ def compile_study_guide_pdf_reportlab(
     )
 
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle("NoteSupTitle", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=19, leading=23, spaceAfter=10)
-    topic_style = ParagraphStyle("NoteSupTopic", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=16, leading=20, spaceBefore=8, spaceAfter=8)
-    section_style = ParagraphStyle("NoteSupSection", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=12.5, leading=16, spaceBefore=8, spaceAfter=5)
-    body_style = ParagraphStyle("NoteSupBody", parent=styles["BodyText"], fontName="Helvetica", fontSize=9.5, leading=13, spaceAfter=7)
-    small_style = ParagraphStyle("NoteSupSmall", parent=body_style, fontSize=8.5, leading=11)
-    equation_style = ParagraphStyle("NoteSupEquation", parent=body_style, fontName="Courier", fontSize=8.5, leading=12, alignment=TA_CENTER, leftIndent=8, rightIndent=8, spaceBefore=4, spaceAfter=8)
+    title_style = ParagraphStyle(
+        "NoteSupTitle",
+        parent=styles["Title"],
+        fontName="NoteSans-Bold",
+        fontSize=17,
+        leading=21,
+        spaceAfter=8,
+    )
+    topic_style = ParagraphStyle(
+        "NoteSupTopic",
+        parent=styles["Heading1"],
+        fontName="NoteSans-Bold",
+        fontSize=12,
+        leading=15,
+        spaceBefore=8,
+        spaceAfter=5,
+    )
+    section_style = ParagraphStyle(
+        "NoteSupSection",
+        parent=styles["Heading2"],
+        fontName="NoteSans-Bold",
+        fontSize=10,
+        leading=13,
+        spaceBefore=6,
+        spaceAfter=3,
+    )
+    body_style = ParagraphStyle(
+        "NoteSupBody",
+        parent=styles["BodyText"],
+        fontName="NoteSans",
+        fontSize=9.5,
+        leading=13,
+        spaceAfter=5,
+    )
+    small_style = ParagraphStyle(
+        "NoteSupSmall",
+        parent=body_style,
+        fontSize=8,
+        leading=10,
+    )
+    equation_style = ParagraphStyle(
+        "NoteSupEquation",
+        parent=body_style,
+        fontName="NoteMono",
+        fontSize=8.5,
+        leading=12,
+        alignment=TA_CENTER,
+        leftIndent=8,
+        rightIndent=8,
+        spaceBefore=4,
+        spaceAfter=8,
+    )
 
     story = [
         Paragraph(html_escape(clean_text(title) or "AI Study Guide"), title_style),
