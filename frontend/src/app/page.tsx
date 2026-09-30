@@ -322,17 +322,26 @@ export default function Home() {
   const handleAnalyze = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
+    console.log("ANALYZE BUTTON CLICKED");
+    console.log("FACULTY FILE:", facultyFile?.name);
+    console.log("STUDENT PDF:", studentPdf?.name);
+    console.log("STUDENT IMAGES:", studentImages.length);
+    console.log("API URL:", API_URL);
+
     if (!facultyFile) {
+      console.warn("ANALYZE BLOCKED: faculty file is missing");
       alert("Please upload the faculty material first.");
       return;
     }
 
     if (studentImages.length === 0 && !studentPdf) {
+      console.warn("ANALYZE BLOCKED: no student notes were selected");
       alert("Please upload handwritten notes as images or a PDF.");
       return;
     }
 
     if (studentImages.length > 0 && studentPdf) {
+      console.warn("ANALYZE BLOCKED: both student images and PDF are selected");
       alert("Please upload either handwritten note images or one handwritten-notes PDF, not both.");
       return;
     }
@@ -366,9 +375,12 @@ export default function Home() {
 
     try {
       setLoadingStatus("Waking the Study Sanctuary backend...");
+      console.log("BEFORE BACKEND HEALTH CHECK");
       await waitForBackend();
+      console.log("BACKEND HEALTH PASSED");
 
       setLoadingStatus("Analyzing your notes...");
+      console.log("ABOUT TO POST /analyze");
       const response = await postWithNetworkRetry(
         `${API_URL}/analyze`,
         {
@@ -379,6 +391,7 @@ export default function Home() {
         ANALYZE_TIMEOUT_MS,
         3
       );
+      console.log("ANALYZE RESPONSE:", response.status);
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(errorText || `Analysis failed with status ${response.status}`);
@@ -829,6 +842,7 @@ export default function Home() {
 
             <button
               type="submit"
+              onClick={() => console.log("ANALYZE SUBMIT BUTTON CLICK")}
               disabled={loading}
               className="md:col-span-2 w-full py-4 bg-white text-black rounded-2xl font-bold text-lg hover:bg-gray-200 transition-all flex items-center justify-center gap-3 disabled:opacity-50 shadow-[0_0_40px_rgba(255,255,255,0.1)]"
             >
