@@ -35,6 +35,106 @@ openrouter_client = (
 )
 
 
+# ---------------------------------------------------------
+# GROQ STRICT JSON SCHEMAS
+# ---------------------------------------------------------
+# Groq's qwen3.8-27b and gpt-oss-120b support strict
+# structured outputs. These schemas prevent malformed JSON
+# such as numeric values like "0. nine".
+# ---------------------------------------------------------
+
+FACULTY_TOPICS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "topics": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string"},
+                    "description": {"type": "string"},
+                    "important_concepts": {"type": "array", "items": {"type": "string"}},
+                    "formulas": {"type": "array", "items": {"type": "string"}},
+                    "exam_relevance": {"type": "string"},
+                    "importance": {"type": "string", "enum": ["High", "Medium", "Low"]},
+                },
+                "required": [
+                    "topic",
+                    "description",
+                    "important_concepts",
+                    "formulas",
+                    "exam_relevance",
+                    "importance",
+                ],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["topics"],
+    "additionalProperties": False,
+}
+
+STUDENT_TOPICS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "topics": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string"},
+                    "covered_concepts": {"type": "array", "items": {"type": "string"}},
+                    "formulas": {"type": "array", "items": {"type": "string"}},
+                    "examples": {"type": "array", "items": {"type": "string"}},
+                    "confidence": {"type": "number"},
+                },
+                "required": [
+                    "topic",
+                    "covered_concepts",
+                    "formulas",
+                    "examples",
+                    "confidence",
+                ],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["topics"],
+    "additionalProperties": False,
+}
+
+GAP_ANALYSIS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "topics": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string"},
+                    "status": {"type": "string", "enum": ["MISSING", "PARTIAL", "MASTERED"]},
+                    "summary": {"type": "string"},
+                    "why_needed": {"type": "string"},
+                    "student_knowledge": {"type": "string"},
+                    "missing_information": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": [
+                    "topic",
+                    "status",
+                    "summary",
+                    "why_needed",
+                    "student_knowledge",
+                    "missing_information",
+                ],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["topics"],
+    "additionalProperties": False,
+}
+
+
 def clean_json_response(text: str) -> str:
     text = text.strip()
     fence = chr(96) * 3
@@ -207,6 +307,7 @@ def generate_groq(
     json_mode: bool = False,
     max_completion_tokens: int = 8192,
     temperature: float = 0.2,
+    json_schema: Dict[str, Any] = None,
 ) -> str:
     print(f"AI REQUEST | task=TEXT | provider=Groq | model={GROQ_TEXT_MODEL}")
     kwargs = {
@@ -219,7 +320,16 @@ def generate_groq(
         "max_completion_tokens": max_completion_tokens,
         "stream": False,
     }
-    if json_mode:
+    if json_schema is not None:
+        kwargs["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "notes_up_response",
+                "strict": True,
+                "schema": json_schema,
+            },
+        }
+    elif json_mode:
         kwargs["response_format"] = {"type": "json_object"}
     response = groq_client.chat.completions.create(**kwargs)
     content = response.choices[0].message.content
@@ -235,6 +345,7 @@ def generate_with_fallback(
     json_mode: bool = False,
     max_output_tokens: int = 8192,
     temperature: float = 0.2,
+    groq_json_schema: Dict[str, Any] = None,
 ) -> str:
     """
     Fallback order for text generation:
@@ -307,6 +418,7 @@ def generate_with_fallback(
         json_mode=json_mode,
         max_completion_tokens=max_output_tokens,
         temperature=temperature,
+        json_schema=groq_json_schema,
     )
 
 
@@ -1252,6 +1364,7 @@ Faculty material:
         json_mode=True,
         max_output_tokens=4096,
         temperature=0.1,
+        groq_json_schema=FACULTY_TOPICS_SCHEMA,
     )
     topics = normalize_topic_list(parse_json_response(content, "FACULTY TOPICS"))
     if not topics:
@@ -1287,6 +1400,7 @@ Student notes:
         json_mode=True,
         max_output_tokens=4096,
         temperature=0.1,
+        groq_json_schema=STUDENT_TOPICS_SCHEMA,
     )
     topics = normalize_topic_list(parse_json_response(content, "STUDENT TOPICS"))
     if not topics:
@@ -1349,6 +1463,7 @@ STUDENT TOPICS:
         json_mode=True,
         max_output_tokens=8192,
         temperature=0.1,
+        groq_json_schema=GAP_ANALYSIS_SCHEMA,
     )
 
     result = parse_json_response(content, "GAP ANALYSIS")
