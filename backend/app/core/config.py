@@ -16,6 +16,7 @@ load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_API_KEY_2 = os.getenv("GEMINI_API_KEY_2")
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 
 if not GEMINI_API_KEY:
     raise RuntimeError(
@@ -76,6 +77,15 @@ GROQ_TEXT_MODEL = os.getenv(
 
 
 # ---------------------------------------------------------
+# MISTRAL MODEL
+# ---------------------------------------------------------
+
+MISTRAL_TEXT_MODEL = os.getenv(
+    "MISTRAL_TEXT_MODEL",
+    "mistral-small-latest",
+)
+
+# ---------------------------------------------------------
 # OPENROUTER FREE MODELS
 # ---------------------------------------------------------
 # These are explicitly the :free variants so the fallback
@@ -111,6 +121,14 @@ print(
 
 print(
     f"Groq Text Model: {GROQ_TEXT_MODEL}"
+)
+
+print(
+    f"Mistral Text Model: {MISTRAL_TEXT_MODEL}"
+)
+
+print(
+    f"Mistral API Key Configured: {bool(MISTRAL_API_KEY)}"
 )
 
 print(
