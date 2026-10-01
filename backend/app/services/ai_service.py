@@ -11,7 +11,6 @@ from openai import OpenAI
 
 from app.core.config import (
     GEMINI_API_KEY,
-    GEMINI_API_KEY_2,
     GEMINI_MODEL,
     GROQ_API_KEY,
     GROQ_VISION_MODEL,
@@ -27,11 +26,6 @@ from app.core.config import (
 gemini_clients = [
     ("primary", genai.Client(api_key=GEMINI_API_KEY)),
 ]
-
-if GEMINI_API_KEY_2:
-    gemini_clients.append(
-        ("notesup2", genai.Client(api_key=GEMINI_API_KEY_2))
-    )
 
 groq_client = Groq(api_key=GROQ_API_KEY)
 
