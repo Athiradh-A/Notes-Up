@@ -248,6 +248,14 @@ def normalize_topic_list(data: Any) -> List[Dict[str, Any]]:
             if topics:
                 return topics
 
+            # Some providers return a simple list of topic names.
+            string_topics = []
+            for item in value:
+                if isinstance(item, str) and item.strip():
+                    string_topics.append({"topic": item.strip(), "description": ""})
+            if string_topics:
+                return string_topics
+
             for item in value:
                 topics = find_topics(item, depth + 1)
                 if topics:
@@ -295,6 +303,22 @@ def normalize_topic_list(data: Any) -> List[Dict[str, Any]]:
 
         if mapping_topics:
             return normalize_items(mapping_topics)
+
+        # Last-resort recovery for providers that return:
+        # {"Topic A": "description", "Topic B": "description"}
+        # This is still a real topic map, just without a "topics" wrapper.
+        scalar_topics = []
+        for key, nested in value.items():
+            if not isinstance(key, str) or not key.strip():
+                continue
+            if isinstance(nested, str) and nested.strip():
+                scalar_topics.append({
+                    "topic": key.strip(),
+                    "description": nested.strip(),
+                })
+
+        if scalar_topics:
+            return scalar_topics
 
         # Finally inspect other nested objects, but only for topic-shaped data.
         for key, nested in value.items():
@@ -1493,7 +1517,35 @@ Faculty material:
         temperature=0.1,
         groq_json_schema=FACULTY_TOPICS_SCHEMA,
     )
-    topics = normalize_topic_list(parse_json_response(content, "FACULTY TOPICS"))
+    try:
+        topics = normalize_topic_list(parse_json_response(content, "FACULTY TOPICS"))
+    except ValueError as parse_error:
+        print(
+            "FACULTY TOPIC RECOVERY | provider=Groq | "
+            f"reason={str(parse_error)}"
+        )
+        recovery_prompt = f"""
+Convert the following already-generated faculty topic JSON into EXACTLY this
+shape and return ONLY valid JSON:
+{{"topics":[{{"topic":"string","description":"string","important_concepts":["string"],"formulas":["string"],"exam_relevance":"string","importance":"High|Medium|Low"}}]}}
+
+Do not add new information. Preserve the original topics and information.
+If the original data contains a topic-name keyed object, use the key as topic.
+
+SOURCE JSON:
+{content}
+"""
+        recovery_content = generate_groq(
+            prompt=recovery_prompt,
+            system_instruction="Repair JSON structure only. Do not invent content.",
+            json_mode=True,
+            max_completion_tokens=3000,
+            temperature=0.0,
+            json_schema=FACULTY_TOPICS_SCHEMA,
+        )
+        topics = normalize_topic_list(
+            parse_json_response(recovery_content, "FACULTY TOPICS RECOVERY")
+        )
     if not topics:
         raise ValueError("Faculty topic extraction returned an empty topic map.")
     return topics
@@ -1529,7 +1581,35 @@ Student notes:
         temperature=0.1,
         groq_json_schema=STUDENT_TOPICS_SCHEMA,
     )
-    topics = normalize_topic_list(parse_json_response(content, "STUDENT TOPICS"))
+    try:
+        topics = normalize_topic_list(parse_json_response(content, "STUDENT TOPICS"))
+    except ValueError as parse_error:
+        print(
+            "STUDENT TOPIC RECOVERY | provider=Groq | "
+            f"reason={str(parse_error)}"
+        )
+        recovery_prompt = f"""
+Convert the following already-generated student topic JSON into EXACTLY this
+shape and return ONLY valid JSON:
+{{"topics":[{{"topic":"string","covered_concepts":["string"],"formulas":["string"],"examples":["string"],"confidence":0.0}}]}}
+
+Do not add new information. Preserve the original topics and information.
+If the original data contains a topic-name keyed object, use the key as topic.
+
+SOURCE JSON:
+{content}
+"""
+        recovery_content = generate_groq(
+            prompt=recovery_prompt,
+            system_instruction="Repair JSON structure only. Do not invent content.",
+            json_mode=True,
+            max_completion_tokens=3000,
+            temperature=0.0,
+            json_schema=STUDENT_TOPICS_SCHEMA,
+        )
+        topics = normalize_topic_list(
+            parse_json_response(recovery_content, "STUDENT TOPICS RECOVERY")
+        )
     if not topics:
         raise ValueError("Student topic extraction returned an empty topic map.")
     return topics
