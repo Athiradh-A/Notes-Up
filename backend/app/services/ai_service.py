@@ -191,53 +191,129 @@ def coerce_text(value: Any) -> str:
 
 
 def normalize_topic_list(data: Any) -> List[Dict[str, Any]]:
-    """Normalize the topic-map shapes returned by all supported providers.
+    """Normalize topic lists even when providers add harmless JSON wrappers."""
+    topic_keys = ("topic", "topic_name", "name", "title")
+    list_keys = (
+        "topics",
+        "faculty_topics",
+        "student_topics",
+        "faculty_knowledge_map",
+        "student_knowledge_map",
+        "knowledge_map",
+        "analysis",
+        "results",
+        "items",
+        "data",
+    )
 
-    Never silently turn a recognized-but-malformed response into an empty map.
-    The caller can distinguish a genuine empty list from an unsupported shape.
-    """
-    if isinstance(data, list):
-        items = data
-    elif isinstance(data, dict):
-        items = None
-        for key in (
-            "topics",
-            "faculty_topics",
-            "student_topics",
-            "faculty_knowledge_map",
-            "student_knowledge_map",
-            "knowledge_map",
-        ):
-            candidate = data.get(key)
-            if isinstance(candidate, list):
-                items = candidate
-                break
-        if items is None:
-            raise ValueError(
-                "AI topic extraction returned JSON, but no recognized topic list was found."
-            )
-    else:
+    def normalize_items(items: Any) -> List[Dict[str, Any]]:
+        if not isinstance(items, list):
+            return []
+
+        normalized = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+
+            cleaned = dict(item)
+            topic = ""
+            for key in topic_keys:
+                candidate = cleaned.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    topic = candidate.strip()
+                    break
+
+            if not topic:
+                continue
+
+            cleaned["topic"] = topic
+            for key in (
+                "description", "summary", "why_needed",
+                "student_knowledge", "evidence", "confidence",
+                "importance", "page_reference"
+            ):
+                if key in cleaned:
+                    cleaned[key] = coerce_text(cleaned[key])
+
+            normalized.append(cleaned)
+
+        return normalized
+
+    def find_topics(value: Any, depth: int = 0) -> List[Dict[str, Any]]:
+        if depth > 8:
+            return []
+
+        if isinstance(value, list):
+            topics = normalize_items(value)
+            if topics:
+                return topics
+
+            for item in value:
+                topics = find_topics(item, depth + 1)
+                if topics:
+                    return topics
+            return []
+
+        if not isinstance(value, dict):
+            return []
+
+        # A provider may return one topic object instead of a list.
+        for key in topic_keys:
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                cleaned = dict(value)
+                cleaned["topic"] = candidate.strip()
+                return normalize_items([cleaned])
+
+        # First inspect known wrapper keys recursively.
+        for key in list_keys:
+            if key in value:
+                topics = find_topics(value[key], depth + 1)
+                if topics:
+                    return topics
+
+        # Some models return {"Topic A": {...}, "Topic B": {...}}.
+        mapping_topics = []
+        for key, nested in value.items():
+            if not isinstance(nested, dict) or not str(key).strip():
+                continue
+            if any(
+                field in nested
+                for field in (
+                    "description",
+                    "important_concepts",
+                    "covered_concepts",
+                    "formulas",
+                    "examples",
+                    "exam_relevance",
+                    "importance",
+                )
+            ):
+                cleaned = dict(nested)
+                cleaned["topic"] = str(key).strip()
+                mapping_topics.append(cleaned)
+
+        if mapping_topics:
+            return normalize_items(mapping_topics)
+
+        # Finally inspect other nested objects, but only for topic-shaped data.
+        for key, nested in value.items():
+            if key in list_keys or not isinstance(nested, (dict, list)):
+                continue
+            topics = find_topics(nested, depth + 1)
+            if topics:
+                return topics
+
+        return []
+
+    topics = find_topics(data)
+
+    if not topics:
         raise ValueError(
-            "AI topic extraction returned an invalid JSON structure."
+            "AI topic extraction returned JSON, but no recognized topic list was found."
         )
 
-    normalized = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        cleaned = dict(item)
-        for key in (
-            "topic", "description", "summary", "why_needed",
-            "student_knowledge", "evidence", "confidence",
-            "importance", "page_reference"
-        ):
-            if key in cleaned:
-                cleaned[key] = coerce_text(cleaned[key])
-        if not str(cleaned.get("topic", "")).strip():
-            continue
-        normalized.append(cleaned)
-
-    return normalized
+    return topics
 
 
 def generate_gemini(
