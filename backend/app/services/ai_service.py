@@ -1,7 +1,6 @@
 import asyncio
 import base64
 import json
-import time
 from typing import List, Dict, Any
 
 from fastapi import UploadFile
@@ -17,6 +16,8 @@ from app.core.config import (
     GROQ_API_KEY,
     GROQ_VISION_MODEL,
     GROQ_TEXT_MODEL,
+    MISTRAL_API_KEY,
+    MISTRAL_TEXT_MODEL,
     OPENROUTER_API_KEY,
     OPENROUTER_VISION_MODEL,
     OPENROUTER_VISION_FALLBACK_MODEL,
@@ -33,6 +34,15 @@ if GEMINI_API_KEY_2:
     )
 
 groq_client = Groq(api_key=GROQ_API_KEY)
+
+mistral_client = (
+    OpenAI(
+        base_url="https://api.mistral.ai/v1",
+        api_key=MISTRAL_API_KEY,
+    )
+    if MISTRAL_API_KEY
+    else None
+)
 
 openrouter_client = (
     OpenAI(
@@ -468,6 +478,50 @@ def generate_groq(
     return content
 
 
+def generate_mistral(
+    prompt: str,
+    system_instruction: str = "",
+    json_mode: bool = False,
+    max_completion_tokens: int = 8192,
+    temperature: float = 0.2,
+) -> str:
+    if mistral_client is None:
+        raise RuntimeError("MISTRAL_API_KEY is not configured.")
+
+    print(
+        f"AI REQUEST | task=TEXT | provider=Mistral | "
+        f"model={MISTRAL_TEXT_MODEL}"
+    )
+
+    kwargs = {
+        "model": MISTRAL_TEXT_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": system_instruction,
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+        "temperature": temperature,
+        "max_tokens": max_completion_tokens,
+    }
+
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+
+    response = mistral_client.chat.completions.create(**kwargs)
+    content = response.choices[0].message.content
+
+    if not content:
+        raise ValueError("Mistral returned an empty response.")
+
+    print("MISTRAL SUCCESS | task=TEXT")
+    return content
+
+
 def generate_with_fallback(
     prompt: str,
     system_instruction: str = "",
@@ -480,45 +534,64 @@ def generate_with_fallback(
     Fallback order for text generation:
 
     1. Gemini
-    2. OpenRouter Qwen3.8 27B :free
-    3. Groq
+    2. Mistral
+    3. OpenRouter Qwen3.8 27B :free
+    4. Groq
 
-    Gemini is retried once before moving to the next provider.
-    OpenRouter is skipped when no OPENROUTER_API_KEY is configured.
+    Gemini is not retried immediately. If it fails, the next provider
+    is tried directly. OpenRouter and Mistral are skipped when their
+    API keys are not configured.
     """
 
-    for attempt in range(1, 3):
+    try:
+        print(
+            f"PRIMARY ATTEMPT | provider=Gemini | model={GEMINI_MODEL}"
+        )
+
+        return generate_gemini(
+            prompt=prompt,
+            system_instruction=system_instruction,
+            json_mode=json_mode,
+            max_output_tokens=max_output_tokens,
+            temperature=temperature,
+        )
+
+    except Exception as gemini_error:
+        print(
+            "GEMINI ERROR | "
+            f"type={type(gemini_error).__name__} | "
+            f"error={repr(gemini_error)}"
+        )
+
+    if mistral_client is not None:
         try:
             print(
-                f"PRIMARY ATTEMPT | provider=Gemini | "
-                f"attempt={attempt}/2 | model={GEMINI_MODEL}"
+                "FALLBACK | provider=Mistral | "
+                f"model={MISTRAL_TEXT_MODEL} | "
+                "reason=Gemini failed"
             )
 
-            return generate_gemini(
+            return generate_mistral(
                 prompt=prompt,
                 system_instruction=system_instruction,
                 json_mode=json_mode,
-                max_output_tokens=max_output_tokens,
+                max_completion_tokens=max_output_tokens,
                 temperature=temperature,
             )
 
-        except Exception as gemini_error:
+        except Exception as mistral_error:
             print(
-                f"GEMINI ERROR | attempt={attempt}/2 | "
-                f"type={type(gemini_error).__name__} | "
-                f"error={repr(gemini_error)}"
+                "MISTRAL ERROR | "
+                f"type={type(mistral_error).__name__} | "
+                f"error={repr(mistral_error)}"
             )
-
-            if attempt < 2:
-                print("GEMINI RETRY | waiting=1s")
-                time.sleep(1)
 
     if openrouter_client is not None:
         try:
             print(
                 "FALLBACK | provider=OpenRouter | "
                 f"model={OPENROUTER_TEXT_MODEL} | "
-                "reason=Gemini failed after 2 attempts"
+                "reason=Gemini and Mistral unavailable"
             )
 
             return generate_openrouter(
@@ -538,7 +611,7 @@ def generate_with_fallback(
 
     print(
         "FALLBACK | provider=Groq | "
-        "reason=Gemini and OpenRouter unavailable"
+        "reason=Gemini, Mistral, and OpenRouter unavailable"
     )
 
     return generate_groq(
