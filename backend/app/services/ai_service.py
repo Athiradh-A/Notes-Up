@@ -196,7 +196,15 @@ def coerce_text(value: Any) -> str:
 
 def normalize_topic_list(data: Any) -> List[Dict[str, Any]]:
     """Normalize topic lists even when providers add harmless JSON wrappers."""
-    topic_keys = ("topic", "topic_name", "name", "title")
+    topic_keys = (
+        "topic",
+        "topic_name",
+        "name",
+        "title",
+        "subject",
+        "concept",
+        "heading",
+    )
     list_keys = (
         "topics",
         "faculty_topics",
@@ -204,11 +212,26 @@ def normalize_topic_list(data: Any) -> List[Dict[str, Any]]:
         "faculty_knowledge_map",
         "student_knowledge_map",
         "knowledge_map",
+        "topic_list",
+        "topic_map",
         "analysis",
         "results",
         "items",
         "data",
     )
+
+    def get_ci(mapping: Dict[str, Any], aliases: tuple) -> Any:
+        if not isinstance(mapping, dict):
+            return None
+        lowered = {
+            str(key).strip().lower(): value
+            for key, value in mapping.items()
+        }
+        for alias in aliases:
+            value = lowered.get(alias.lower())
+            if value is not None:
+                return value
+        return None
 
     def normalize_items(items: Any) -> List[Dict[str, Any]]:
         if not isinstance(items, list):
@@ -222,7 +245,7 @@ def normalize_topic_list(data: Any) -> List[Dict[str, Any]]:
             cleaned = dict(item)
             topic = ""
             for key in topic_keys:
-                candidate = cleaned.get(key)
+                candidate = get_ci(cleaned, (key,))
                 if isinstance(candidate, str) and candidate.strip():
                     topic = candidate.strip()
                     break
@@ -279,8 +302,9 @@ def normalize_topic_list(data: Any) -> List[Dict[str, Any]]:
 
         # First inspect known wrapper keys recursively.
         for key in list_keys:
-            if key in value:
-                topics = find_topics(value[key], depth + 1)
+            candidate = get_ci(value, (key,))
+            if candidate is not None:
+                topics = find_topics(candidate, depth + 1)
                 if topics:
                     return topics
 
@@ -324,9 +348,14 @@ def normalize_topic_list(data: Any) -> List[Dict[str, Any]]:
         if scalar_topics:
             return scalar_topics
 
-        # Finally inspect other nested objects, but only for topic-shaped data.
+        # Finally inspect other nested objects/lists, including wrappers
+        # whose names differ from our known provider-specific keys.
         for key, nested in value.items():
-            if key in list_keys or not isinstance(nested, (dict, list)):
+            if str(key).strip().lower() in {
+                item.lower() for item in list_keys
+            }:
+                continue
+            if not isinstance(nested, (dict, list)):
                 continue
             topics = find_topics(nested, depth + 1)
             if topics:
@@ -396,6 +425,7 @@ def generate_openrouter(
     json_mode: bool = False,
     max_completion_tokens: int = 8192,
     temperature: float = 0.2,
+    json_schema: Dict[str, Any] = None,
 ) -> str:
     if openrouter_client is None:
         raise RuntimeError("OPENROUTER_API_KEY is not configured.")
@@ -421,7 +451,16 @@ def generate_openrouter(
         "max_tokens": max_completion_tokens,
     }
 
-    if json_mode:
+    if json_schema is not None:
+        kwargs["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "notes_up_response",
+                "strict": True,
+                "schema": json_schema,
+            },
+        }
+    elif json_mode:
         kwargs["response_format"] = {"type": "json_object"}
 
     response = openrouter_client.chat.completions.create(**kwargs)
@@ -478,6 +517,7 @@ def generate_mistral(
     json_mode: bool = False,
     max_completion_tokens: int = 8192,
     temperature: float = 0.2,
+    json_schema: Dict[str, Any] = None,
 ) -> str:
     if mistral_client is None:
         raise RuntimeError("MISTRAL_API_KEY is not configured.")
@@ -503,7 +543,16 @@ def generate_mistral(
         "max_tokens": max_completion_tokens,
     }
 
-    if json_mode:
+    if json_schema is not None:
+        kwargs["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "notes_up_response",
+                "strict": True,
+                "schema": json_schema,
+            },
+        }
+    elif json_mode:
         kwargs["response_format"] = {"type": "json_object"}
 
     response = mistral_client.chat.completions.create(**kwargs)
@@ -571,6 +620,7 @@ def generate_with_fallback(
                 json_mode=json_mode,
                 max_completion_tokens=max_output_tokens,
                 temperature=temperature,
+                json_schema=groq_json_schema,
             )
 
         except Exception as mistral_error:
@@ -594,6 +644,7 @@ def generate_with_fallback(
                 json_mode=json_mode,
                 max_completion_tokens=max_output_tokens,
                 temperature=temperature,
+                json_schema=groq_json_schema,
             )
 
         except Exception as openrouter_error:
@@ -749,73 +800,66 @@ async def transcribe_images(image_files: List[UploadFile]) -> str:
 
             gemini_succeeded = False
 
-            # Gemini is the primary vision provider. Retry once for
-            # transient failures such as HTTP 503/high-demand responses.
-            for attempt in range(1, 3):
-                try:
-                    print(
-                        f"GEMINI VISION ATTEMPT | file={img_file.filename} | "
-                        f"attempt={attempt}/2"
-                    )
+            # Gemini is the primary vision provider. If it fails for any
+            # reason, use the existing vision fallbacks immediately. This
+            # avoids wasting quota on a second 429 request.
+            try:
+                print(
+                    f"GEMINI VISION ATTEMPT | file={img_file.filename} | "
+                    "attempt=1/1"
+                )
 
-                    for key_name, client in gemini_clients:
-                        try:
-                            print(
-                                f"GEMINI VISION KEY ATTEMPT | "
-                                f"file={img_file.filename} | key={key_name}"
-                            )
+                for key_name, client in gemini_clients:
+                    try:
+                        print(
+                            f"GEMINI VISION KEY ATTEMPT | "
+                            f"file={img_file.filename} | key={key_name}"
+                        )
 
-                            response = client.models.generate_content(
-                                model=GEMINI_MODEL,
-                                contents=[
-                                    transcription_prompt,
-                                    types.Part.from_bytes(
-                                        data=image_bytes,
-                                        mime_type=content_type,
-                                    ),
-                                ],
-                                config=types.GenerateContentConfig(
-                                    temperature=0.2,
-                                    max_output_tokens=1200,
+                        response = client.models.generate_content(
+                            model=GEMINI_MODEL,
+                            contents=[
+                                transcription_prompt,
+                                types.Part.from_bytes(
+                                    data=image_bytes,
+                                    mime_type=content_type,
                                 ),
+                            ],
+                            config=types.GenerateContentConfig(
+                                temperature=0.2,
+                                max_output_tokens=1200,
+                            ),
+                        )
+
+                        transcription = response.text
+
+                        if not transcription:
+                            raise ValueError(
+                                "Gemini returned an empty transcription."
                             )
 
-                            transcription = response.text
-
-                            if not transcription:
-                                raise ValueError(
-                                    "Gemini returned an empty transcription."
-                                )
-
-                            print(
-                                f"VISION SUCCESS | file={img_file.filename} | "
-                                f"provider=Gemini | key={key_name}"
-                            )
-                            gemini_succeeded = True
-                            break
-
-                        except Exception as key_error:
-                            print(
-                                f"GEMINI VISION KEY ERROR | "
-                                f"file={img_file.filename} | key={key_name} | "
-                                f"type={type(key_error).__name__} | "
-                                f"error={repr(key_error)}"
-                            )
-
-                    if gemini_succeeded:
+                        print(
+                            f"VISION SUCCESS | file={img_file.filename} | "
+                            f"provider=Gemini | key={key_name}"
+                        )
+                        gemini_succeeded = True
                         break
 
-                except Exception as gemini_error:
-                    print(
-                        f"GEMINI VISION ERROR | file={img_file.filename} | "
-                        f"attempt={attempt}/2 | "
-                        f"type={type(gemini_error).__name__} | "
-                        f"error={repr(gemini_error)}"
-                    )
+                    except Exception as key_error:
+                        print(
+                            f"GEMINI VISION KEY ERROR | "
+                            f"file={img_file.filename} | key={key_name} | "
+                            f"type={type(key_error).__name__} | "
+                            f"error={repr(key_error)}"
+                        )
 
-                    if attempt < 2:
-                        print("GEMINI VISION RETRY | waiting=1s")
-                        await asyncio.sleep(1)
+            except Exception as gemini_error:
+                print(
+                    f"GEMINI VISION ERROR | file={img_file.filename} | "
+                    "attempt=1/1 | "
+                    f"type={type(gemini_error).__name__} | "
+                    f"error={repr(gemini_error)}"
+                )
 
             if not gemini_succeeded:
                 transcription = None
@@ -1007,7 +1051,7 @@ Inspect every attached page before answering.
             f"STUDENT BATCH | batch={batch_number} | "
             f"provider=Gemini | model={GEMINI_MODEL} | images={len(image_files)}"
         )
-        response = gemini_client.models.generate_content(
+        response = gemini_clients[0][1].models.generate_content(
             model=GEMINI_MODEL,
             contents=[prompt, *image_parts_gemini],
             config=types.GenerateContentConfig(
