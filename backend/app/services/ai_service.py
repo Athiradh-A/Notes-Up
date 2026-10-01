@@ -1460,37 +1460,109 @@ Student notes:
 
 
 def _find_topic_analysis(value: Any, depth: int = 0) -> Any:
-    """Find a topic-analysis list anywhere in a small AI JSON response.
+    """Find and normalize a topic-analysis list from provider JSON.
 
-    Providers may wrap the requested ``topics`` array in different objects.
-    Search recursively, but keep the search bounded so arbitrary JSON cannot
-    accidentally be treated as a valid analysis response.
+    Different providers/models can wrap the same analysis as:
+    - {"topics": [...]}
+    - {"gap_analysis": [...]}
+    - {"gap_analysis": {"Topic A": {...}}}
+    - {"analysis": {"topics": [...]}}
+    - a direct list of topic objects
+
+    Be tolerant of harmless wrapper/key differences, while requiring an
+    actual topic name before accepting an item as topic analysis.
     """
-    if depth > 6:
+    if depth > 8:
         return None
 
+    topic_keys = ("topic", "topic_name", "name", "title")
+
     if isinstance(value, list):
-        valid_items = [
-            item for item in value
-            if isinstance(item, dict)
-            and str(item.get("topic", "")).strip()
-        ]
-        return valid_items or None
+        normalized = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+
+            topic = ""
+            for key in topic_keys:
+                candidate = item.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    topic = candidate.strip()
+                    break
+
+            if not topic:
+                continue
+
+            cleaned = dict(item)
+            cleaned["topic"] = topic
+            normalized.append(cleaned)
+
+        return normalized or None
 
     if not isinstance(value, dict):
         return None
 
+    # A single topic object can appear without a surrounding list.
+    direct_topic = ""
+    for key in topic_keys:
+        candidate = value.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            direct_topic = candidate.strip()
+            break
+
+    if direct_topic:
+        cleaned = dict(value)
+        cleaned["topic"] = direct_topic
+        return [cleaned]
+
     preferred_keys = (
-        "topics", "gap_analysis", "topic_analysis", "topic_analyses",
-        "analysis", "results", "gaps",
+        "topics",
+        "gap_analysis",
+        "topic_analysis",
+        "topic_analyses",
+        "analysis",
+        "results",
+        "gaps",
+        "analyses",
+        "items",
     )
 
     for key in preferred_keys:
         if key not in value:
             continue
+
         candidate = _find_topic_analysis(value[key], depth + 1)
         if candidate:
             return candidate
+
+    # Some models return a mapping keyed by topic name:
+    # {"Bayesian Networks": {"status": "MISSING", ...}}
+    mapping_topics = []
+    for key, nested_value in value.items():
+        if not isinstance(nested_value, dict):
+            continue
+
+        if not any(
+            field in nested_value
+            for field in (
+                "status",
+                "summary",
+                "why_needed",
+                "student_knowledge",
+                "missing_information",
+            )
+        ):
+            continue
+
+        if not str(key).strip():
+            continue
+
+        cleaned = dict(nested_value)
+        cleaned["topic"] = str(key).strip()
+        mapping_topics.append(cleaned)
+
+    if mapping_topics:
+        return mapping_topics
 
     for key, nested_value in value.items():
         if key in preferred_keys:
@@ -1569,26 +1641,56 @@ STUDENT TOPICS:
         f"keys={list(result.keys()) if isinstance(result, dict) else 'not-a-dict'}"
     )
 
-    if isinstance(result, list):
-        topics = _find_topic_analysis(result)
-        if topics:
-            return {"topics": topics}
-        raise ValueError(
-            "Gap analysis returned a JSON list, but it contained no valid topic analysis."
-        )
-
-    if not isinstance(result, dict):
-        raise ValueError("Gap analysis returned an invalid JSON structure.")
-
     topics = _find_topic_analysis(result)
 
-    if not topics:
-        raise ValueError(
-            "Gap analysis returned JSON, but no recognized topic analysis list was found."
+    if topics:
+        if isinstance(result, dict):
+            result["topics"] = topics
+            return result
+        return {"topics": topics}
+
+    # Gemini/OpenRouter JSON mode guarantees JSON, but not always the exact
+    # schema requested in the prompt. If the response is valid JSON but has
+    # an unexpected wrapper, make one strict Groq retry instead of failing the
+    # entire analysis pipeline.
+    print(
+        "GAP ANALYSIS SHAPE ERROR | "
+        "retrying with Groq strict JSON schema"
+    )
+
+    try:
+        strict_content = generate_groq(
+            prompt=prompt,
+            system_instruction="You are an academic knowledge-gap analysis system. "
+            "Return ONLY the requested JSON schema.",
+            json_mode=True,
+            max_completion_tokens=8192,
+            temperature=0.1,
+            json_schema=GAP_ANALYSIS_SCHEMA,
+        )
+        strict_result = parse_json_response(
+            strict_content,
+            "GAP ANALYSIS STRICT RETRY",
+        )
+        strict_topics = _find_topic_analysis(strict_result)
+
+        if strict_topics:
+            if isinstance(strict_result, dict):
+                strict_result["topics"] = strict_topics
+                return strict_result
+            return {"topics": strict_topics}
+
+    except Exception as retry_error:
+        print(
+            "GAP ANALYSIS STRICT RETRY ERROR | "
+            f"type={type(retry_error).__name__} | "
+            f"error={repr(retry_error)}"
         )
 
-    result["topics"] = topics
-    return result
+    raise ValueError(
+        "Gap analysis returned valid JSON, but no topic analysis could be "
+        "recognized. The AI response used an unsupported structure."
+    )
 
 async def generate_study_notes(
     topic: str,
