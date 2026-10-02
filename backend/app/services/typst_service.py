@@ -14,7 +14,7 @@ from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Image as ReportLabImage
-from reportlab.platypus import ListFlowable, ListItem, PageBreak, Paragraph, SimpleDocTemplate, Spacer
+from reportlab.platypus import ListFlowable, ListItem, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import matplotlib
 matplotlib.use("Agg")
 matplotlib.rcParams["mathtext.fontset"] = "stix"
@@ -48,15 +48,20 @@ TEMPLATE_PATH = (
 def clean_text(value: Any) -> str:
     if value is None:
         return ""
+    text = str(value)
+    # Normalize provider-escaped control characters before rendering.
+    text = text.replace("\\\\r\\\\n", "\\n")
+    text = text.replace("\\\\n", "\\n")
+    text = text.replace("\\\\r", "\\n")
+    text = text.replace("\\\\t", "\\t")
     return (
-        str(value)
-        .replace("\\(", "")
-        .replace("\\)", "")
-        .replace("\\[", "")
-        .replace("\\]", "")
+        text
+        .replace("\\\\(", "")
+        .replace("\\\\)", "")
+        .replace("\\\\[", "")
+        .replace("\\\\]", "")
         .strip()
     )
-
 
 def escape_typst_plain_text(value: Any) -> str:
     """Escape plain text so it is safe to insert into Typst markup."""
@@ -68,58 +73,50 @@ def escape_typst_plain_text(value: Any) -> str:
 
 
 def markdown_to_typst_text(value: Any) -> str:
-    """
-    Convert the small Markdown subset commonly returned by the AI into real
-    Typst inline formatting.
-
-    Markdown:
-      **bold** / __bold__ -> Typst *bold*
-      *italic* / _italic_ -> Typst _italic_
-      ***bold italic*** -> Typst *[bold italic]*
-
-    Everything else is escaped as plain text.
-    """
+    """Convert Markdown and inline math into safe Typst markup."""
     text = clean_text(value)
     if not text:
         return ""
 
-    placeholders: list[tuple[str, str]] = []
+    math_placeholders: list[tuple[str, str]] = []
 
+    def protect_math(pattern: str) -> None:
+        nonlocal text
+        def repl(match: re.Match[str]) -> str:
+            token = f"NOTESUPMATH{len(math_placeholders)}TOKEN"
+            math_placeholders.append((token, "$" + match.group(1).strip() + "$"))
+            return token
+        text = re.sub(pattern, repl, text, flags=re.DOTALL)
+
+    # Preserve \(...\) and single-$...$ inline math.
+    protect_math(r"\\\\\\((.+?)\\\\\\)")
+    protect_math(r"(?<!\\$)\\$(?!\\$)(.+?)(?<!\\$)\\$(?!\\$)")
+
+    placeholders: list[tuple[str, str]] = []
     def protect(pattern: str, replacement_builder) -> None:
         nonlocal text
-
         def repl(match: re.Match[str]) -> str:
             token = f"NOTESUPFMT{len(placeholders)}TOKEN"
             inner = escape_typst_plain_text(match.group(1))
             placeholders.append((token, replacement_builder(inner)))
             return token
-
         text = re.sub(pattern, repl, text, flags=re.DOTALL)
 
-    # Handle the most specific form first so ***bold italic*** is not
-    # interpreted as separate bold/italic markers.
-    protect(r"\*\*\*(.+?)\*\*\*", lambda inner: f"*_{inner}_*")
-    protect(r"\*\*(.+?)\*\*", lambda inner: f"*{inner}*")
+    protect(r"\\*\\*\\*(.+?)\\*\\*\\*", lambda inner: f"*_{{{inner}}}_*")
+    protect(r"\\*\\*(.+?)\\*\\*", lambda inner: f"*{inner}*")
     protect(r"__(.+?)__", lambda inner: f"*{inner}*")
-    protect(r"(?<!\*)\*([^*\n]+)\*(?!\*)", lambda inner: f"_{inner}_")
-    protect(r"(?<!_)_([^_\n]+)_(?!_)", lambda inner: f"_{inner}_")
+    protect(r"(?<!\\*)\\*([^*\\n]+)\\*(?!\\*)", lambda inner: f"_{inner}_")
+    protect(r"(?<!_)_([^_\\n]+)_(?!_)", lambda inner: f"_{inner}_")
 
     escaped = escape_typst_plain_text(text)
-
     for token, replacement in placeholders:
-        # Placeholder tokens contain underscores, which are escaped by
-        # escape_typst_plain_text(). Search for the exact escaped token.
-        escaped_token = escape_typst_plain_text(token)
-        escaped = escaped.replace(escaped_token, replacement)
-
-        # Safety net: never allow an internal formatting token to reach the PDF.
+        escaped = escaped.replace(escape_typst_plain_text(token), replacement)
         escaped = escaped.replace(token, replacement)
-
+    for token, replacement in math_placeholders:
+        escaped = escaped.replace(escape_typst_plain_text(token), replacement)
+        escaped = escaped.replace(token, replacement)
     return escaped
 
-
-# Keep the old function name as a compatibility wrapper for callers that only
-# need escaped plain text.
 def escape_typst_text(value: Any) -> str:
     return markdown_to_typst_text(value)
 
@@ -305,40 +302,29 @@ def equation_to_typst(value: Any) -> str:
             + equation[matrix.end():]
         )
 
-    equation = equation.replace("\\\\", " ")
+    equation = equation.replace("\\\\", " \\n ")
     return equation.strip()
 
 
 def strip_inline_equations(text: str) -> str:
-    """Remove equation duplicates from prose; equations are rendered from the
-    dedicated equations array immediately after the section content."""
-    text = re.sub(r"\\\((.+?)\\\)", "", text)
-    text = re.sub(r"\\\[(.+?)\\\]", "", text)
-    text = re.sub(r"\$(.+?)\$", "", text)
-
-    # Remove common bare LaTeX equation fragments that AI sometimes places
-    # directly inside prose even though the same equation is in equations[].
-    math_start = r"(?:\\(?:hat|bar|tilde|mathbf|mathrm|frac|sqrt)\s*\{|[A-Za-z][A-Za-z0-9]*_\{)"
-    bare_equation = re.compile(
-        math_start + r".{0,260}?(?:=|\\sim|\\in|\\leq|\\geq).{0,220}?(?=,|:|;|\.|$)"
-    )
-    text = bare_equation.sub("", text)
-
+    """Remove only full/display equation duplicates from prose."""
+    text = clean_text(text)
+    text = re.sub(r"\\\\\\[(.+?)\\\\\\]", "", text, flags=re.DOTALL)
+    text = re.sub(r"\\$\\$(.+?)\\$\\$", "", text, flags=re.DOTALL)
     cleaned_lines = []
     for line in text.splitlines():
         stripped = line.strip()
-        if (
-            stripped
-            and ("=" in stripped or "\\" in stripped)
-            and sum(stripped.count(ch) for ch in "{}_^\\") >= 3
+        # Remove a bare full equation only when it occupies its own line.
+        if stripped and "=" in stripped and (
+            "\\mathbf" in stripped or "\\mathbb" in stripped or
+            "\\mathcal" in stripped or "\\frac" in stripped or
+            re.search(r"[A-Za-z]_\\{", stripped)
         ):
             words = re.findall(r"[A-Za-z]{2,}", stripped)
-            if len(words) <= 3:
+            if len(words) <= 10 and not re.search(r"[.!?]\\s", stripped):
                 continue
         cleaned_lines.append(line)
-
     return "\n".join(cleaned_lines)
-
 
 def add_text_paragraphs(lines: List[str], value: Any) -> None:
     text = clean_text(value)
@@ -370,27 +356,19 @@ def add_equation(lines: List[str], equation: Any, safe_text: bool = False) -> No
     equation_text = extract_equation(equation)
     if not equation_text:
         return
-
     if safe_text:
-        # Last-resort representation: unsupported LaTeX/Unicode is rendered as text.
         lines.append("#align(center)[")
         lines.append("  #set text(size: 11pt)")
         lines.append("  " + escape_typst_text(equation_text))
         lines.append("]")
         lines.append("")
         return
-
     equation_text = equation_to_typst(equation)
     if not equation_text:
         return
-
-    lines.append("#align(center)[")
-    lines.append("  #set text(size: 12.5pt)")
-    lines.append("  $" + equation_text + "$")
-    lines.append("]")
+    # Team-2 style: centered display math with automatic right-side numbering.
+    lines.append("$ " + equation_text + " $")
     lines.append("")
-
-
 
 def build_study_guide_typst(
     notes: Dict[str, Any] | List[Dict[str, Any]],
