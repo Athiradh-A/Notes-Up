@@ -39,8 +39,9 @@
 }
 
 #show list: set list(marker: "•")
+#set math.equation(numbering: "(1)")
 #show math.equation: set text(size: 10pt)
-#show math.equation: set block(spacing: 0.35em)
+#show math.equation: set block(spacing: 0.55em)
 #show enum: set enum(numbering: "1.")
 
 {{CONTENT}}
