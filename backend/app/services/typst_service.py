@@ -77,7 +77,9 @@ def markdown_to_typst_text(value: Any) -> str:
         nonlocal text
         def repl(match: re.Match[str]) -> str:
             token = f"NOTESUPMATH{len(math_placeholders)}TOKEN"
-            math_placeholders.append((token, "$" + match.group(1).strip() + "$"))
+            raw_math = match.group(1).strip()
+            rendered_math = equation_to_typst(raw_math) or raw_math
+            math_placeholders.append((token, "$" + rendered_math + "$"))
             return token
         text = re.sub(pattern, repl, text, flags=re.DOTALL)
 
