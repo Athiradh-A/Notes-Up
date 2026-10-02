@@ -339,8 +339,8 @@ def add_text_paragraphs(lines: List[str], value: Any) -> None:
     # equations. Extract display-math blocks and render them as numbered
     # equations; keep short inline math inside the prose.
     display_pattern = re.compile(
-        r"\\\\\\[(.+?)\\\\\\]|\\\\\\((.+?)\\\\\\)|"
-        r"\\$\\$(.+?)\\$\\$",
+        r"\\\[(.+?)\\\]|\\\((.+?)\\\)|"
+        r"\$\$(.+?)\$\$",
         flags=re.DOTALL,
     )
 
