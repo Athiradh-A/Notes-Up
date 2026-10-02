@@ -328,16 +328,69 @@ def strip_inline_equations(text: str) -> str:
         cleaned_lines.append(line)
     return "\n".join(cleaned_lines)
 
+def _looks_like_equation(text: str) -> bool:
+    """Return True for a standalone mathematical expression."""
+    value = text.strip()
+    if not value or "=" not in value:
+        return False
+    if re.search(r"[.!?]$", value) and len(value.split()) > 14:
+        return False
+    # Require mathematical structure rather than treating ordinary prose
+    # such as "A is equal to B" as an equation.
+    return bool(
+        re.search(r"[A-Za-z]_[A-Za-z0-9{]|\\(?:hat|mathbf|mathbb|mathcal|frac|sim)", value)
+        or re.search(r"\\s*[A-Za-z]\s*=|[A-Za-z]\\s*=|[A-Za-z]\\s*\\+|[A-Za-z]\\s*\\-", value)
+        or re.search(r"\\b[A-Za-z]+_[A-Za-z0-9]+\\b", value)
+    )
+
+
+def _split_bare_equations(text: str) -> list[tuple[str, str | None]]:
+    """Split prose around simple bare equations produced without math delimiters."""
+    pieces: list[tuple[str, str | None]] = []
+    # First handle lines that are purely equations.
+    for block in re.split(r"(?<=\n)\s*\n", text):
+        block = block.strip()
+        if not block:
+            continue
+        lines = block.splitlines()
+        if len(lines) == 1 and _looks_like_equation(lines[0]):
+            pieces.append(("", lines[0].strip()))
+            continue
+
+        # Models frequently put several equations into one paragraph:
+        # "... x_t=A x_(t-1)+... , ... y_t=H x_t+v_t, ...".
+        cursor = 0
+        found = False
+        pattern = re.compile(
+            r"(?P<eq>\\b[A-Za-z](?:_[A-Za-z0-9{}|]+)?\\s*=\\s*"
+            r"[^,.;!?]+)"
+        )
+        for match in pattern.finditer(block):
+            candidate = match.group("eq").strip()
+            if not _looks_like_equation(candidate):
+                continue
+            prefix = block[cursor:match.start()].strip()
+            if prefix:
+                pieces.append((prefix, None))
+            pieces.append(("", candidate))
+            cursor = match.end()
+            found = True
+        if found:
+            suffix = block[cursor:].strip(" ,;")
+            if suffix:
+                pieces.append((suffix, None))
+        else:
+            pieces.append((block, None))
+    return pieces
+
+
 def add_text_paragraphs(lines: List[str], value: Any) -> None:
-    """Add prose while preserving display equations instead of deleting them."""
+    """Add prose while preserving and recovering mathematical expressions."""
     text = clean_text(value)
     if not text:
         return
 
-    # Models sometimes put equations in section content even though the
-    # JSON schema asks for an `equations` array. Do not delete those
-    # equations. Extract display-math blocks and render them as numbered
-    # equations; keep short inline math inside the prose.
+    # Preserve explicit display math first.
     display_pattern = re.compile(
         r"\\\[(.+?)\\\]|\\\((.+?)\\\)|"
         r"\$\$(.+?)\$\$",
@@ -348,13 +401,7 @@ def add_text_paragraphs(lines: List[str], value: Any) -> None:
     for match in display_pattern.finditer(text):
         prose = text[cursor:match.start()]
         if prose.strip():
-            paragraphs = [
-                part.strip() for part in prose.split("\n\n") if part.strip()
-            ]
-            for paragraph in paragraphs:
-                lines.append(markdown_to_typst_text(paragraph))
-                lines.append("")
-
+            _add_prose_or_bare_equations(lines, prose)
         equation = next(
             (group for group in match.groups() if group is not None),
             "",
@@ -364,12 +411,23 @@ def add_text_paragraphs(lines: List[str], value: Any) -> None:
 
     remaining = text[cursor:]
     if remaining.strip():
-        paragraphs = [
-            part.strip() for part in remaining.split("\n\n") if part.strip()
-        ]
-        for paragraph in paragraphs:
-            lines.append(markdown_to_typst_text(paragraph))
-            lines.append("")
+        _add_prose_or_bare_equations(lines, remaining)
+
+
+def _add_prose_or_bare_equations(lines: List[str], text: str) -> None:
+    for prose, equation in _split_bare_equations(text):
+        if prose:
+            paragraphs = [
+                part.strip()
+                for part in prose.split("\n\n")
+                if part.strip()
+            ]
+            for paragraph in paragraphs:
+                lines.append(markdown_to_typst_text(paragraph))
+                lines.append("")
+        if equation:
+            add_equation(lines, equation)
+
 def add_bullets(lines: List[str], items: Any) -> None:
     if not isinstance(items, list):
         return
