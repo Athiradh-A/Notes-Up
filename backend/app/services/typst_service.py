@@ -49,17 +49,17 @@ def clean_text(value: Any) -> str:
     if value is None:
         return ""
     text = str(value)
-    # Normalize provider-escaped control characters before rendering.
-    text = text.replace("\\\\r\\\\n", "\\n")
-    text = text.replace("\\\\n", "\\n")
-    text = text.replace("\\\\r", "\\n")
-    text = text.replace("\\\\t", "\\t")
+    # Normalize provider-escaped control characters into real characters.
+    text = text.replace("\\r\\n", "\n")
+    text = text.replace("\\n", "\n")
+    text = text.replace("\\r", "\n")
+    text = text.replace("\\t", "\t")
     return (
         text
-        .replace("\\\\(", "")
-        .replace("\\\\)", "")
-        .replace("\\\\[", "")
-        .replace("\\\\]", "")
+        .replace("\\(", "")
+        .replace("\\)", "")
+        .replace("\\[", "")
+        .replace("\\]", "")
         .strip()
     )
 
@@ -88,9 +88,8 @@ def markdown_to_typst_text(value: Any) -> str:
             return token
         text = re.sub(pattern, repl, text, flags=re.DOTALL)
 
-    # Preserve \(...\) and single-$...$ inline math.
     protect_math(r"\\\\\\((.+?)\\\\\\)")
-    protect_math(r"(?<!\\$)\\$(?!\\$)(.+?)(?<!\\$)\\$(?!\\$)")
+    protect_math(r"(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)")
 
     placeholders: list[tuple[str, str]] = []
     def protect(pattern: str, replacement_builder) -> None:
@@ -102,11 +101,11 @@ def markdown_to_typst_text(value: Any) -> str:
             return token
         text = re.sub(pattern, repl, text, flags=re.DOTALL)
 
-    protect(r"\\*\\*\\*(.+?)\\*\\*\\*", lambda inner: f"*_{{{inner}}}_*")
-    protect(r"\\*\\*(.+?)\\*\\*", lambda inner: f"*{inner}*")
+    protect(r"\*\*\*(.+?)\*\*\*", lambda inner: f"*_{inner}_*")
+    protect(r"\*\*(.+?)\*\*", lambda inner: f"*{inner}*")
     protect(r"__(.+?)__", lambda inner: f"*{inner}*")
-    protect(r"(?<!\\*)\\*([^*\\n]+)\\*(?!\\*)", lambda inner: f"_{inner}_")
-    protect(r"(?<!_)_([^_\\n]+)_(?!_)", lambda inner: f"_{inner}_")
+    protect(r"(?<!\*)\*([^*\n]+)\*(?!\*)", lambda inner: f"_{inner}_")
+    protect(r"(?<!_)_([^_\n]+)_(?!_)", lambda inner: f"_{inner}_")
 
     escaped = escape_typst_plain_text(text)
     for token, replacement in placeholders:
@@ -302,7 +301,7 @@ def equation_to_typst(value: Any) -> str:
             + equation[matrix.end():]
         )
 
-    equation = equation.replace("\\\\", " \\n ")
+    equation = equation.replace("\\\\", " ")
     return equation.strip()
 
 
