@@ -54,14 +54,7 @@ def clean_text(value: Any) -> str:
     text = text.replace("\\n", "\n")
     text = text.replace("\\r", "\n")
     text = text.replace("\\t", "\t")
-    return (
-        text
-        .replace("\\(", "")
-        .replace("\\)", "")
-        .replace("\\[", "")
-        .replace("\\]", "")
-        .strip()
-    )
+    return text.strip()
 
 def escape_typst_plain_text(value: Any) -> str:
     """Escape plain text so it is safe to insert into Typst markup."""
@@ -88,8 +81,11 @@ def markdown_to_typst_text(value: Any) -> str:
             return token
         text = re.sub(pattern, repl, text, flags=re.DOTALL)
 
-    protect_math(r"\\\\\\((.+?)\\\\\\)")
+    protect_math(r"\\\((.+?)\\\)")
     protect_math(r"(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)")
+    
+    # Common bare LaTeX that models place inline without delimiters.
+    protect_math(r"(\\(?:mathbf|mathbb|mathcal|mathrm|hat|bar|tilde)\\s*\\{[^{}]+\\}(?:\\s*(?:_|\\^)[^,.; ]+)?(?:\\s*(?:\\in|\\sim|=|\\leq|\\geq|\\cdot|\\times)\\s*[^,.;]+)?)")
 
     placeholders: list[tuple[str, str]] = []
     def protect(pattern: str, replacement_builder) -> None:
@@ -122,32 +118,37 @@ def escape_typst_text(value: Any) -> str:
 
 
 def extract_equation(value: Any) -> str:
-    """Extract only the equation from an AI equation object/string."""
+    """Extract only the mathematical payload from an AI equation object/string."""
     if isinstance(value, dict):
-        return clean_text(value.get("eq", ""))
+        raw_value = value.get("eq", "")
+    elif isinstance(value, str):
+        raw_value = value
+    else:
+        raw_value = value
 
-    if not isinstance(value, str):
-        return clean_text(value)
+    equation = clean_text(raw_value)
+    if not equation:
+        return ""
 
-    raw = value.strip()
     for parser in (json.loads, ast.literal_eval):
         try:
-            parsed = parser(raw)
+            parsed = parser(equation)
             if isinstance(parsed, dict) and "eq" in parsed:
-                return clean_text(parsed["eq"])
+                equation = clean_text(parsed["eq"])
+                break
         except (ValueError, SyntaxError, TypeError, json.JSONDecodeError):
             pass
 
-    match = re.search(
-        r"""['"]eq['"]\s*:\s*['"](.*?)['"]\s*,\s*['"]variables['"]""",
-        raw,
-        flags=re.DOTALL,
-    )
-    if match:
-        return match.group(1).replace("\\\\", "\\").strip()
-
-    return raw
-
+    equation = equation.strip()
+    if equation.startswith("\\(") and equation.endswith("\\)"):
+        equation = equation[2:-2].strip()
+    if equation.startswith("\\[") and equation.endswith("\\]"):
+        equation = equation[2:-2].strip()
+    if equation.startswith("$$") and equation.endswith("$$"):
+        equation = equation[2:-2].strip()
+    elif equation.startswith("$") and equation.endswith("$"):
+        equation = equation[1:-1].strip()
+    return equation
 
 def escape_typst_title(value: Any) -> str:
     return escape_typst_text(value)
