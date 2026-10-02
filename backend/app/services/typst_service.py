@@ -329,17 +329,47 @@ def strip_inline_equations(text: str) -> str:
     return "\n".join(cleaned_lines)
 
 def add_text_paragraphs(lines: List[str], value: Any) -> None:
+    """Add prose while preserving display equations instead of deleting them."""
     text = clean_text(value)
     if not text:
         return
 
-    text = strip_inline_equations(text)
-    paragraphs = [part.strip() for part in text.split("\n\n") if part.strip()]
-    for paragraph in paragraphs:
-        lines.append(markdown_to_typst_text(paragraph))
-        lines.append("")
+    # Models sometimes put equations in section content even though the
+    # JSON schema asks for an `equations` array. Do not delete those
+    # equations. Extract display-math blocks and render them as numbered
+    # equations; keep short inline math inside the prose.
+    display_pattern = re.compile(
+        r"\\\\\\[(.+?)\\\\\\]|\\\\\\((.+?)\\\\\\)|"
+        r"\\$\\$(.+?)\\$\\$",
+        flags=re.DOTALL,
+    )
 
+    cursor = 0
+    for match in display_pattern.finditer(text):
+        prose = text[cursor:match.start()]
+        if prose.strip():
+            paragraphs = [
+                part.strip() for part in prose.split("\n\n") if part.strip()
+            ]
+            for paragraph in paragraphs:
+                lines.append(markdown_to_typst_text(paragraph))
+                lines.append("")
 
+        equation = next(
+            (group for group in match.groups() if group is not None),
+            "",
+        )
+        add_equation(lines, equation)
+        cursor = match.end()
+
+    remaining = text[cursor:]
+    if remaining.strip():
+        paragraphs = [
+            part.strip() for part in remaining.split("\n\n") if part.strip()
+        ]
+        for paragraph in paragraphs:
+            lines.append(markdown_to_typst_text(paragraph))
+            lines.append("")
 def add_bullets(lines: List[str], items: Any) -> None:
     if not isinstance(items, list):
         return
