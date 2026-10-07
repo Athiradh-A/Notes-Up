@@ -148,6 +148,46 @@ GAP_ANALYSIS_SCHEMA = {
 }
 
 
+NOTE_SECTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "heading": {"type": "string"},
+        "content": {"type": "string"},
+        "equations": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["heading", "content", "equations"],
+    "additionalProperties": False,
+}
+
+NOTE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "topic": {"type": "string"},
+        "status": {"type": "string", "enum": ["MISSING", "PARTIAL", "missing", "partial"]},
+        "why_needed": {"type": "string"},
+        "student_knowledge": {"type": "string"},
+        "missing_information": {"type": "array", "items": {"type": "string"}},
+        "sections": {"type": "array", "items": NOTE_SECTION_SCHEMA},
+        "exam_points": {"type": "array", "items": {"type": "string"}},
+        "sources": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": [
+        "topic", "status", "why_needed", "student_knowledge",
+        "missing_information", "sections", "exam_points", "sources"
+    ],
+    "additionalProperties": False,
+}
+
+BULK_NOTE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "notes": {"type": "array", "items": NOTE_SCHEMA},
+    },
+    "required": ["notes"],
+    "additionalProperties": False,
+}
+
+
 def clean_json_response(text: str) -> str:
     text = text.strip()
     fence = chr(96) * 3
@@ -1969,7 +2009,7 @@ async def generate_study_notes(
 ) -> Dict[str, Any]:
 
     prompt = f"""
-Create targeted study notes for the following topic.
+Create targeted study notes for ONE academic gap.
 
 Topic:
 {topic}
@@ -1989,32 +2029,44 @@ Missing information:
 Faculty material context:
 {faculty_context}
 
-IMPORTANT RULES:
-
+SOURCE AND EQUATION RULES:
 1. The faculty material is the primary reference.
-2. Do not invent faculty-specific information.
-3. Do not invent slide numbers or page numbers.
-4. Do not claim a formula came from the faculty material unless it is actually present there.
-5. If the topic is PARTIAL, focus mainly on the missing information.
-6. Avoid unnecessarily repeating information the student already knows.
-7. Explain concepts clearly for exam preparation.
-8. Include equations when appropriate.
-9. Define every variable used in an equation.
-10. Include step-by-step procedures when appropriate.
-11. Include a small example when the source material supports it.
-12. Clearly separate source-supported content from general explanation if necessary.
-13. Keep the notes concise and academic, using a single-column IEEE-inspired style rather than a two-column conference layout.
-14. Use about 3-5 sections when appropriate and avoid repeating the same explanation.
-15. Put only necessary formulas in the equations array and explain their variables in normal text.
-16. Do not repeat full equations inside section content; place each full mathematical expression only in the equations array. In prose, refer to the equation by name and explain its variables.
-16. Keep paragraphs short and exam-focused.
+2. Do not invent faculty-specific definitions, formulas, examples, or references.
+3. If a formula/equation is present in the faculty material and is relevant to
+   this gap, preserve it accurately.
+4. Every complete mathematical formula that appears in the note MUST also
+   appear exactly once in the relevant section's "equations" array.
+5. Never write a complete formula in "content" and omit it from "equations".
+6. Do not replace a required formula with words such as "the covariance
+   equation" or "the Kalman gain formula".
+7. If an equation is long, keep the full equation in "equations" and explain
+   its variables in "content".
+8. Use LaTeX-style mathematical strings in equations[] only. Examples:
+   "Σ_{t|t-1}=AΣ_{t-1}A^T+Q"
+   "K_t=Σ_{t|t-1}H^T(HΣ_{t|t-1}H^T+R)^{-1}"
+   These examples define formatting only; do not include them unless supported
+   by the faculty material.
+9. Preserve subscripts, superscripts, hats, bars, matrices, fractions, Greek
+   symbols, and transposes.
+10. Do not output raw LaTeX commands as ordinary prose.
+11. For PARTIAL topics, focus mainly on the missing faculty-supported content.
+12. Avoid unnecessarily repeating what the student already knows.
+13. Include step-by-step procedures when supported.
+14. Include examples only when the source material supports them.
+15. Keep the notes concise, academic, exam-oriented, and single-column.
+16. Use about 3-5 sections when appropriate.
 17. Keep exam_points concise and limited to the most important points.
+18. Before returning JSON, perform an EQUATION AUDIT:
+    - scan every section's content;
+    - identify every complete mathematical expression;
+    - copy each one into equations[];
+    - verify that equations[] is not empty when the faculty-supported topic
+      requires formulas.
 
-Return JSON in exactly this structure:
-
+Return ONLY valid JSON in exactly this structure:
 {{
     "topic": "...",
-    "status": "...",
+    "status": "MISSING|PARTIAL",
     "why_needed": "...",
     "student_knowledge": "...",
     "missing_information": [],
@@ -2032,10 +2084,15 @@ Return JSON in exactly this structure:
 
     content = generate_with_fallback(
         prompt=prompt,
-        system_instruction="You generate structured, source-grounded academic study notes.",
+        system_instruction=(
+            "You generate structured, source-grounded academic study notes. "
+            "Mathematical completeness is mandatory: never omit a formula "
+            "that is supported by the supplied faculty context."
+        ),
         json_mode=True,
         max_output_tokens=8192,
         temperature=0.2,
+        groq_json_schema=NOTE_SCHEMA,
     )
 
     result = parse_json_response(content, "STUDY NOTES")
@@ -2056,41 +2113,48 @@ async def generate_bulk_study_notes(
     prompt = f"""
 Create targeted study notes for ALL of the academic gaps below.
 
-The faculty material is the PRIMARY reference.
-
 Faculty material context:
 {faculty_context}
 
 Gaps:
 {json.dumps(gaps, indent=2)}
 
-For every gap, create one study-note object.
+The faculty material is the PRIMARY reference.
 
-IMPORTANT RULES:
+For every gap create one note object. For PARTIAL topics, focus mainly on what
+is missing.
 
-1. Use the faculty material as the primary reference.
-2. Do not invent faculty-specific information.
-3. Do not invent slide numbers or page numbers.
-4. If a topic is PARTIAL, focus mainly on the missing information.
-5. Avoid unnecessarily repeating information the student already knows.
-6. Explain concepts clearly for exam preparation.
-7. Include equations when appropriate.
-8. Define every variable used in an equation.
-9. Include step-by-step procedures when appropriate.
-10. Include a small example when the source material supports it.
-11. Keep the notes concise and academic, using a single-column IEEE-inspired style rather than a two-column conference layout.
-12. Use about 3-5 sections per topic when appropriate; avoid repeating the same explanation.
-13. Put only necessary formulas in the equations array and explain their variables in normal text.
-14. Keep paragraphs short and exam-focused.
-15. Keep exam_points concise and limited to the most important points.
+EQUATION REQUIREMENTS:
+1. Preserve every faculty-supported formula relevant to a gap.
+2. Every complete formula appearing anywhere in section content MUST also be
+   copied into that section's equations[] array.
+3. Never replace a formula with a phrase such as "the covariance equation".
+4. Never return an empty equations[] for a section that contains or requires
+   a faculty-supported formula.
+5. Keep complete formulas out of ordinary prose when possible; explain
+   variables in prose and put the full expression in equations[].
+6. Use LaTeX-style strings in equations[] and preserve subscripts, superscripts,
+   Greek symbols, matrices, fractions, hats, bars, and transposes.
+7. Do not invent formulas not supported by the faculty material.
+8. Before returning JSON, perform an equation audit of every generated note.
 
-Return ONLY valid JSON in exactly this structure:
+CONTENT REQUIREMENTS:
+- Do not invent faculty-specific information.
+- Do not invent slide/page references.
+- Avoid unnecessarily repeating mastered/student-known material.
+- Explain concepts clearly for exam preparation.
+- Include step-by-step procedures when appropriate.
+- Include examples only when source material supports them.
+- Keep notes concise and single-column IEEE-inspired.
+- Use about 3-5 sections per topic when appropriate.
+- Keep exam_points concise.
 
+Return ONLY valid JSON:
 {{
     "notes": [
         {{
             "topic": "...",
-            "status": "...",
+            "status": "MISSING|PARTIAL",
             "why_needed": "...",
             "student_knowledge": "...",
             "missing_information": [],
@@ -2111,12 +2175,13 @@ Return ONLY valid JSON in exactly this structure:
     content = generate_with_fallback(
         prompt=prompt,
         system_instruction=(
-            "You generate structured, source-grounded "
-            "academic study notes for multiple topics."
+            "You generate structured, source-grounded academic study notes "
+            "with complete equations preserved in equations[]."
         ),
         json_mode=True,
         max_output_tokens=8192,
         temperature=0.2,
+        groq_json_schema=BULK_NOTE_SCHEMA,
     )
 
     result = parse_json_response(content, "BULK STUDY NOTES")
